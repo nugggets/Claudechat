@@ -53,6 +53,7 @@ object Files {
             mime == "application/pdf" || ext == "pdf" -> importPdf(c, uri, name, id, dir)
             ext == "docx" -> importOffice(c, uri, name, id, dir, true)
             ext == "pptx" -> importOffice(c, uri, name, id, dir, false)
+            ext == "zip" -> importZip(c, uri, name, id, dir)
             else -> importText(c, uri, name, id, dir)
         }
     }
@@ -202,11 +203,57 @@ object Files {
             if (bytes[i].toInt() == 0) {
                 throw Exception(
                     "Формат не поддерживается: $name. Можно прикреплять изображения, PDF, " +
-                        "текст и код, docx, pptx (таблицы xlsx сохраните как CSV)."
+                        "текст и код, docx, pptx, zip (таблицы xlsx сохраните как CSV)."
                 )
             }
         }
         return saveText(dir, id, name, String(bytes, Charsets.UTF_8))
+    }
+
+    // ---------- zip ----------
+
+    private fun importZip(c: Context, uri: Uri, name: String, id: String, dir: File): Att {
+        val skipDirs = listOf(".git/", "build/", ".gradle/", "node_modules/", "__pycache__/", ".idea/")
+        val index = StringBuilder()
+        val body = StringBuilder()
+        var skipped = 0
+        open(c, uri, name).use { raw ->
+            val z = ZipInputStream(raw)
+            while (true) {
+                val e = z.nextEntry ?: break
+                if (e.isDirectory) continue
+                val en = e.name
+                if (skipDirs.any { en.contains(it) }) {
+                    skipped++
+                    continue
+                }
+                val bytes = readUpTo(z, 1024 * 1024)
+                var binary = false
+                for (k in 0 until minOf(bytes.size, 8000)) {
+                    if (bytes[k].toInt() == 0) {
+                        binary = true
+                        break
+                    }
+                }
+                if (binary) {
+                    index.append(en).append("  (бинарный файл, пропущен)\n")
+                    continue
+                }
+                val txt = String(bytes, Charsets.UTF_8)
+                if (body.length + txt.length > MAX_TEXT_CHARS) {
+                    index.append(en).append("  (не включён: лимит размера)\n")
+                    continue
+                }
+                index.append(en).append("\n")
+                body.append("===== ").append(en).append(" =====\n").append(txt).append("\n\n")
+            }
+        }
+        if (body.isEmpty()) throw Exception("В архиве нет текстовых файлов: $name")
+        val sb = StringBuilder()
+        sb.append("Архив: ").append(name).append("\n\nСписок файлов:\n").append(index)
+        if (skipped > 0) sb.append("Пропущено служебных файлов (.git, build и т.п.): ").append(skipped).append("\n")
+        sb.append("\n").append(body)
+        return saveText(dir, id, name, sb.toString())
     }
 
     // ---------- docx / pptx ----------
