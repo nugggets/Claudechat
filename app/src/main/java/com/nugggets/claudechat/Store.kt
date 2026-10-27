@@ -108,6 +108,17 @@ object Store {
     fun temp(c: Context): String = p(c).getString("temp", "") ?: ""
     fun web(c: Context): Boolean = p(c).getBoolean("web", false)
 
+    /** Модели, полученные с сервера; пока не загружены — встроенный набор. */
+    fun modelIds(c: Context): List<String> {
+        val raw = p(c).getString("mlist", "") ?: ""
+        val l = raw.split("\n").filter { it.isNotBlank() }
+        return if (l.isEmpty()) MODELS.map { it.second } else l
+    }
+
+    fun setModelIds(c: Context, ids: List<String>) {
+        p(c).edit().putString("mlist", ids.joinToString("\n")).apply()
+    }
+
     fun setModel(c: Context, m: String) {
         p(c).edit().putString("model", m).apply()
     }

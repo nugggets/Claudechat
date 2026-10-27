@@ -662,9 +662,9 @@ class MainActivity : Activity() {
     }
 
     private fun pickModel() {
-        val names = Store.MODELS.map { it.first }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("Модель").setItems(names) { _, w ->
-            Store.setModel(this, Store.MODELS[w].second)
+        val ids = Store.modelIds(this)
+        AlertDialog.Builder(this).setTitle("Модель").setItems(ids.toTypedArray()) { _, w ->
+            Store.setModel(this, ids[w])
             updateInfo()
         }.show()
     }

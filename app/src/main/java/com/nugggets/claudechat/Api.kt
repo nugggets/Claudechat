@@ -338,3 +338,50 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         }
     }
 }
+
+/** Запрашивает у сервера список доступных моделей (GET /v1/models). */
+fun fetchModels(cfg: Cfg): List<String> {
+    var u = cfg.url.trim().trimEnd('/')
+    if (u.endsWith("/messages")) u = u.removeSuffix("/messages")
+    if (u.endsWith("/v1")) u = u.removeSuffix("/v1")
+    val c = try {
+        URL("$u/v1/models?limit=1000").openConnection() as HttpURLConnection
+    } catch (e: Exception) {
+        throw ApiError("Неверный адрес API: " + cfg.url)
+    }
+    try {
+        c.requestMethod = "GET"
+        c.connectTimeout = 20000
+        c.readTimeout = 30000
+        c.setRequestProperty("anthropic-version", "2023-06-01")
+        if (cfg.bearer) {
+            c.setRequestProperty("Authorization", "Bearer " + cfg.key)
+        } else {
+            c.setRequestProperty("x-api-key", cfg.key)
+        }
+        val code = c.responseCode
+        if (code !in 200..299) {
+            val raw = c.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            throw ApiError(Req.friendly(code, raw), code)
+        }
+        val raw = c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val arr = JSONObject(raw).optJSONArray("data")
+            ?: throw ApiError("Сервер не вернул список моделей")
+        val out = mutableListOf<String>()
+        for (i in 0 until arr.length()) {
+            val id = arr.optJSONObject(i)?.optString("id", "") ?: ""
+            if (id.isNotEmpty()) out.add(id)
+        }
+        if (out.isEmpty()) throw ApiError("Список моделей пуст")
+        return out
+    } catch (e: ApiError) {
+        throw e
+    } catch (e: Exception) {
+        throw ApiError("Ошибка: " + (e.message ?: e.javaClass.simpleName))
+    } finally {
+        try {
+            c.disconnect()
+        } catch (e: Exception) {
+        }
+    }
+}

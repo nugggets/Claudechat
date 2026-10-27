@@ -1,6 +1,7 @@
 package com.nugggets.claudechat
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -206,7 +207,8 @@ class SettingsActivity : Activity() {
         add(cbDark, 8)
 
         // --- Действия ---
-        add(button("Проверить ключ", false) { test() }, 28)
+        add(button("Загрузить список моделей с сервера", false) { loadModels() }, 28)
+        add(button("Проверить ключ", false) { test() }, 12)
         result = label("", 14f, Pal.sub, false)
         result.setTextIsSelectable(true)
         add(result, 8)
@@ -225,6 +227,42 @@ class SettingsActivity : Activity() {
         var model = eModel.text.toString().trim()
         if (model.isEmpty()) model = Store.DEFAULT_MODEL
         return Cfg(url, eKey.text.toString().trim(), model, max, "", rbB.isChecked, stream)
+    }
+
+    private fun loadModels() {
+        val cfg = readCfg(false, 16)
+        if (cfg.key.isEmpty()) {
+            result.setTextColor(Pal.err)
+            result.text = "Сначала введите ключ."
+            return
+        }
+        result.setTextColor(Pal.sub)
+        result.text = "Загружаю список моделей…"
+        Thread {
+            var ids: List<String> = emptyList()
+            var bad = ""
+            try {
+                ids = fetchModels(cfg)
+            } catch (e: ApiError) {
+                bad = e.message ?: "Неизвестная ошибка"
+            } catch (e: Exception) {
+                bad = "Ошибка: " + e.message
+            }
+            handler.post {
+                if (bad.isEmpty()) {
+                    Store.setModelIds(this, ids)
+                    result.setTextColor(Pal.text)
+                    result.text = "Моделей на сервере: " + ids.size + ". Выберите одну из списка."
+                    AlertDialog.Builder(this)
+                        .setTitle("Модель")
+                        .setItems(ids.toTypedArray()) { _, w -> eModel.setText(ids[w]) }
+                        .show()
+                } else {
+                    result.setTextColor(Pal.err)
+                    result.text = bad
+                }
+            }
+        }.start()
     }
 
     private fun test() {
