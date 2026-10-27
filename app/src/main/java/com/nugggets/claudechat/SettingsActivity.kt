@@ -34,6 +34,8 @@ class SettingsActivity : Activity() {
     private lateinit var rbB: RadioButton
     private lateinit var cbStream: CheckBox
     private lateinit var cbDark: CheckBox
+    private lateinit var cbWeb: CheckBox
+    private lateinit var eTemp: EditText
     private lateinit var seek: SeekBar
     private lateinit var lblSize: TextView
     private lateinit var result: TextView
@@ -146,13 +148,7 @@ class SettingsActivity : Activity() {
         add(eModel, 8)
         val chips = LinearLayout(this)
         chips.orientation = LinearLayout.HORIZONTAL
-        val presets = listOf(
-            "Opus 5.5" to "claude-opus-5-5",
-            "Fable 5.1" to "claude-fable-5-1",
-            "Sonnet 5.5" to "claude-sonnet-5-5",
-            "Haiku 5.5" to "claude-haiku-5-5"
-        )
-        for ((name, id) in presets) {
+        for ((name, id) in Store.MODELS) {
             val c = label(name, 14f, Pal.text, false)
             c.setPadding(dp(14), dp(8), dp(14), dp(8))
             c.background = rounded(Pal.field, dp(16).toFloat())
@@ -171,6 +167,11 @@ class SettingsActivity : Activity() {
         eMax.inputType = InputType.TYPE_CLASS_NUMBER
         add(eMax, 4)
 
+        small("Температура 0–1 (необязательно, пусто — по умолчанию модели)")
+        eTemp = field("не задана", Store.temp(this))
+        eTemp.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        add(eTemp, 4)
+
         small("Системная инструкция (необязательно)")
         eSys = field("Например: отвечай кратко и по-русски", Store.system(this))
         eSys.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -180,6 +181,9 @@ class SettingsActivity : Activity() {
 
         cbStream = check("Показывать ответ по мере генерации", Store.stream(this))
         add(cbStream, 8)
+
+        cbWeb = check("Веб-поиск Claude (работает только с официальным API Anthropic)", Store.web(this))
+        add(cbWeb, 4)
 
         // --- Вид ---
         head("Вид")
@@ -262,7 +266,8 @@ class SettingsActivity : Activity() {
         val max = (eMax.text.toString().trim().toIntOrNull() ?: 4096).coerceIn(1, 128000)
         Store.saveSettings(
             this, cfg.url, cfg.key, cfg.model, max, eSys.text.toString().trim(),
-            rbB.isChecked, cbStream.isChecked, seek.progress + 10, cbDark.isChecked
+            rbB.isChecked, cbStream.isChecked, seek.progress + 10, cbDark.isChecked,
+            eTemp.text.toString().trim(), cbWeb.isChecked
         )
         Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
         finish()

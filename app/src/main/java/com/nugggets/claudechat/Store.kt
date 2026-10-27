@@ -14,9 +14,21 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class Msg(val role: String, var text: String)
+/** Вложение: имя для показа, тип и имя файла в папке вложений приложения. */
+class Att(val name: String, val mime: String, val file: String) {
+    val isImage: Boolean get() = mime.startsWith("image/")
+    val isPdf: Boolean get() = mime == "application/pdf"
+}
 
-class Chat(val id: String, var title: String, val msgs: MutableList<Msg>, var updated: Long)
+class Msg(val role: String, var text: String, val atts: MutableList<Att> = mutableListOf())
+
+class Chat(
+    val id: String,
+    var title: String,
+    val msgs: MutableList<Msg>,
+    var updated: Long,
+    var sys: String = ""
+)
 
 /** Шифрование ключа через Android Keystore (AES-GCM). */
 object Crypto {
@@ -75,6 +87,13 @@ object Store {
     const val DEFAULT_URL = "https://api.anthropic.com"
     const val DEFAULT_MODEL = "claude-opus-5-5"
 
+    val MODELS = listOf(
+        "Opus 5.5" to "claude-opus-5-5",
+        "Fable 5.1" to "claude-fable-5-1",
+        "Sonnet 5.5" to "claude-sonnet-5-5",
+        "Haiku 5.5" to "claude-haiku-5-5"
+    )
+
     private fun p(c: Context): SharedPreferences = c.getSharedPreferences("cfg", Context.MODE_PRIVATE)
 
     fun baseUrl(c: Context): String = p(c).getString("url", DEFAULT_URL) ?: DEFAULT_URL
@@ -86,6 +105,13 @@ object Store {
     fun stream(c: Context): Boolean = p(c).getBoolean("stream", true)
     fun textSize(c: Context): Int = p(c).getInt("size", 16)
     fun dark(c: Context): Boolean = p(c).getBoolean("dark", true)
+    fun temp(c: Context): String = p(c).getString("temp", "") ?: ""
+    fun web(c: Context): Boolean = p(c).getBoolean("web", false)
+
+    fun setModel(c: Context, m: String) {
+        p(c).edit().putString("model", m).apply()
+    }
+
     fun tokIn(c: Context): Long = p(c).getLong("tin", 0L)
     fun tokOut(c: Context): Long = p(c).getLong("tout", 0L)
 
@@ -99,7 +125,7 @@ object Store {
 
     fun saveSettings(
         c: Context, url: String, key: String, model: String, max: Int, system: String,
-        bearer: Boolean, stream: Boolean, size: Int, dark: Boolean
+        bearer: Boolean, stream: Boolean, size: Int, dark: Boolean, temp: String, web: Boolean
     ) {
         p(c).edit()
             .putString("url", url)
@@ -111,6 +137,8 @@ object Store {
             .putBoolean("stream", stream)
             .putInt("size", size)
             .putBoolean("dark", dark)
+            .putString("temp", temp)
+            .putBoolean("web", web)
             .apply()
     }
 
@@ -131,18 +159,42 @@ object Store {
         return Chat(now.toString(), "Новый чат", mutableListOf(), now)
     }
 
+    fun attDir(c: Context): File {
+        val d = File(c.filesDir, "att")
+        d.mkdirs()
+        return d
+    }
+
     fun save(c: Context, chat: Chat) {
-        val real = chat.msgs.filter { it.text.isNotEmpty() }
-        if (real.isEmpty()) return
+        val real = chat.msgs.filter { it.text.isNotEmpty() || it.atts.isNotEmpty() }
+        if (real.isEmpty()) {
+            try {
+                File(dir(c), chat.id + ".json").delete()
+            } catch (e: Exception) {
+            }
+            return
+        }
         val o = JSONObject()
         o.put("id", chat.id)
         o.put("title", chat.title)
         o.put("updated", chat.updated)
+        o.put("sys", chat.sys)
         val a = JSONArray()
         for (m in real) {
             val j = JSONObject()
             j.put("r", m.role)
             j.put("t", m.text)
+            if (m.atts.isNotEmpty()) {
+                val aa = JSONArray()
+                for (t in m.atts) {
+                    val x = JSONObject()
+                    x.put("n", t.name)
+                    x.put("m", t.mime)
+                    x.put("f", t.file)
+                    aa.put(x)
+                }
+                j.put("a", aa)
+            }
             a.put(j)
         }
         o.put("msgs", a)
@@ -158,9 +210,20 @@ object Store {
         val list = mutableListOf<Msg>()
         for (i in 0 until a.length()) {
             val m = a.getJSONObject(i)
-            list.add(Msg(m.getString("r"), m.getString("t")))
+            val msg = Msg(m.getString("r"), m.getString("t"))
+            val aa = m.optJSONArray("a")
+            if (aa != null) {
+                for (k in 0 until aa.length()) {
+                    val x = aa.getJSONObject(k)
+                    msg.atts.add(Att(x.optString("n", "файл"), x.optString("m", ""), x.optString("f", "")))
+                }
+            }
+            list.add(msg)
         }
-        return Chat(o.getString("id"), o.optString("title", "Чат"), list, o.optLong("updated", 0L))
+        return Chat(
+            o.getString("id"), o.optString("title", "Чат"), list,
+            o.optLong("updated", 0L), o.optString("sys", "")
+        )
     }
 
     fun load(c: Context, id: String): Chat? {
@@ -186,6 +249,10 @@ object Store {
     }
 
     fun delete(c: Context, id: String) {
+        val ch = load(c, id)
+        if (ch != null) {
+            for (m in ch.msgs) Files.dropAll(c, m.atts)
+        }
         File(dir(c), "$id.json").delete()
     }
 }

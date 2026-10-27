@@ -10,7 +10,8 @@ import android.text.style.TypefaceSpan
 
 /** Мини-разметка: заголовки, **жирный**, `код`, блоки кода, списки. */
 object Md {
-    private val inlineRe = Regex("\\*\\*(.+?)\\*\\*|`([^`\\n]+)`")
+    private val inlineRe = Regex("\\*\\*(.+?)\\*\\*|`([^`\\n]+)`|(?<![\\w*])\\*([^*\\s][^*\\n]*?)\\*(?![\\w*])")
+    private val quoteRe = Regex("^>\\s?(.*)$")
     private val headRe = Regex("^(#{1,6})\\s+(.*)$")
     private val bulletRe = Regex("^(\\s*)[-*]\\s+(.*)$")
     private val ruleRe = Regex("^\\s*[-*_]{3,}\\s*$")
@@ -56,6 +57,15 @@ object Md {
                 sb.append("\n")
                 continue
             }
+            val q = quoteRe.find(raw)
+            if (q != null) {
+                val s = sb.length
+                sb.append("▎ ")
+                appendInline(sb, q.groupValues[1])
+                sb.setSpan(StyleSpan(Typeface.ITALIC), s, sb.length, FLAG)
+                sb.append("\n")
+                continue
+            }
             if (raw.trimStart().startsWith("|")) {
                 val s = sb.length
                 sb.append(raw)
@@ -79,8 +89,12 @@ object Md {
             sb.append(line.substring(last, m.range.first))
             val bold = m.groups[1]
             val code = m.groups[2]
+            val ital = m.groups[3]
             val s = sb.length
-            if (bold != null) {
+            if (ital != null) {
+                sb.append(ital.value)
+                sb.setSpan(StyleSpan(Typeface.ITALIC), s, sb.length, FLAG)
+            } else if (bold != null) {
                 sb.append(bold.value)
                 sb.setSpan(StyleSpan(Typeface.BOLD), s, sb.length, FLAG)
             } else if (code != null) {

@@ -1,8 +1,10 @@
 package com.nugggets.claudechat
 
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -10,7 +12,7 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 
-class ApiError(msg: String) : Exception(msg)
+class ApiError(msg: String, val code: Int = 0) : Exception(msg)
 
 class Cfg(
     val url: String,
@@ -19,7 +21,9 @@ class Cfg(
     val maxTokens: Int,
     val system: String,
     val bearer: Boolean,
-    val stream: Boolean
+    val stream: Boolean,
+    val temp: Double? = null,
+    val web: Boolean = false
 )
 
 class Res {
@@ -29,7 +33,7 @@ class Res {
 }
 
 /** Один запрос к /v1/messages. Работает в фоновом потоке. */
-class Req(private val cfg: Cfg) {
+class Req(private val cfg: Cfg, private val attDir: File? = null) {
     @Volatile
     var cancelled = false
 
@@ -58,21 +62,99 @@ class Req(private val cfg: Cfg) {
         }
     }
 
-    fun run(history: List<Msg>, onDelta: (String) -> Unit): Res {
+    private fun textBlock(t: String): JSONObject {
+        val j = JSONObject()
+        j.put("type", "text")
+        j.put("text", t)
+        return j
+    }
+
+    private fun b64Source(mime: String, f: File): JSONObject {
+        val src = JSONObject()
+        src.put("type", "base64")
+        src.put("media_type", mime)
+        src.put("data", Base64.encodeToString(f.readBytes(), Base64.NO_WRAP))
+        return src
+    }
+
+    /** Содержимое сообщения: строка или массив блоков (файлы, затем текст). */
+    private fun content(m: Msg): Any {
+        val dir = attDir
+        if (m.atts.isEmpty() || dir == null) return m.text
+        val arr = JSONArray()
+        for (a in m.atts) {
+            val f = File(dir, a.file)
+            if (!f.exists()) {
+                arr.put(textBlock("[Файл «" + a.name + "» больше недоступен]"))
+                continue
+            }
+            if (a.isImage) {
+                val b = JSONObject()
+                b.put("type", "image")
+                b.put("source", b64Source(a.mime, f))
+                arr.put(b)
+            } else if (a.isPdf) {
+                val b = JSONObject()
+                b.put("type", "document")
+                b.put("source", b64Source("application/pdf", f))
+                b.put("title", a.name)
+                arr.put(b)
+            } else {
+                arr.put(textBlock("Файл «" + a.name + "»:\n\n" + f.readText(Charsets.UTF_8)))
+            }
+        }
+        if (m.text.isNotEmpty()) arr.put(textBlock(m.text))
+        return arr
+    }
+
+    private fun buildBody(history: List<Msg>): ByteArray {
         val body = JSONObject()
         body.put("model", cfg.model)
         body.put("max_tokens", cfg.maxTokens)
         if (cfg.system.isNotBlank()) body.put("system", cfg.system)
+        if (cfg.temp != null) body.put("temperature", cfg.temp)
         val arr = JSONArray()
         for (m in history) {
             val j = JSONObject()
             j.put("role", m.role)
-            j.put("content", m.text)
+            j.put("content", content(m))
             arr.put(j)
         }
         body.put("messages", arr)
         if (cfg.stream) body.put("stream", true)
+        if (cfg.web) {
+            val t = JSONObject()
+            t.put("type", "web_search_20250305")
+            t.put("name", "web_search")
+            t.put("max_uses", 5)
+            body.put("tools", JSONArray().put(t))
+        }
+        return body.toString().toByteArray(Charsets.UTF_8)
+    }
 
+    /** Запрос с двумя повторами при перегрузке сервера или лимите (только до начала ответа). */
+    fun run(history: List<Msg>, onDelta: (String) -> Unit): Res {
+        val bytes = buildBody(history)
+        var attempt = 0
+        while (true) {
+            try {
+                return once(bytes, onDelta)
+            } catch (e: ApiError) {
+                val c = e.code
+                val retry = c == 429 || c == 500 || c == 502 || c == 503 || c == 504 || c == 529
+                if (!retry || attempt >= 2 || cancelled) throw e
+                attempt++
+                var waited = 0
+                while (waited < 2500 * attempt && !cancelled) {
+                    Thread.sleep(100)
+                    waited += 100
+                }
+                if (cancelled) throw e
+            }
+        }
+    }
+
+    private fun once(bytes: ByteArray, onDelta: (String) -> Unit): Res {
         val res = Res()
         val c = try {
             URL(endpoint()).openConnection() as HttpURLConnection
@@ -85,6 +167,7 @@ class Req(private val cfg: Cfg) {
             c.connectTimeout = 20000
             c.readTimeout = if (cfg.stream) 90000 else 300000
             c.doOutput = true
+            c.setFixedLengthStreamingMode(bytes.size)
             c.setRequestProperty("content-type", "application/json")
             c.setRequestProperty("anthropic-version", "2023-06-01")
             if (cfg.bearer) {
@@ -93,12 +176,12 @@ class Req(private val cfg: Cfg) {
                 c.setRequestProperty("x-api-key", cfg.key)
             }
             c.setRequestProperty("accept", if (cfg.stream) "text/event-stream" else "application/json")
-            c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            c.outputStream.use { it.write(bytes) }
 
             val code = c.responseCode
             if (code !in 200..299) {
                 val raw = readAll(c.errorStream)
-                throw ApiError(friendly(code, raw))
+                throw ApiError(friendly(code, raw), code)
             }
             val ct = c.contentType ?: ""
             if (cfg.stream && ct.contains("event-stream")) {
@@ -127,6 +210,7 @@ class Req(private val cfg: Cfg) {
 
     private fun readSse(c: HttpURLConnection, res: Res, onDelta: (String) -> Unit) {
         val r = BufferedReader(InputStreamReader(c.inputStream, Charsets.UTF_8))
+        var emitted = 0
         try {
             while (true) {
                 if (cancelled) break
@@ -146,10 +230,18 @@ class Req(private val cfg: Cfg) {
                         res.inTok = u.optInt("input_tokens", res.inTok)
                         res.outTok = u.optInt("output_tokens", res.outTok)
                     }
+                } else if (type == "content_block_start") {
+                    val b = o.optJSONObject("content_block")
+                    if (b != null && b.optString("type") == "text" && emitted > 0) {
+                        onDelta("\n\n")
+                        emitted += 2
+                    }
                 } else if (type == "content_block_delta") {
                     val d = o.optJSONObject("delta")
                     if (d != null && d.optString("type") == "text_delta") {
-                        onDelta(d.optString("text"))
+                        val t = d.optString("text")
+                        emitted += t.length
+                        onDelta(t)
                     }
                 } else if (type == "message_delta") {
                     val d = o.optJSONObject("delta")
@@ -189,7 +281,10 @@ class Req(private val cfg: Cfg) {
             val sb = StringBuilder()
             for (i in 0 until content.length()) {
                 val b = content.optJSONObject(i) ?: continue
-                if (b.optString("type") == "text") sb.append(b.optString("text"))
+                if (b.optString("type") == "text") {
+                    if (sb.isNotEmpty()) sb.append("\n\n")
+                    sb.append(b.optString("text"))
+                }
             }
             if (sb.isNotEmpty()) onDelta(sb.toString())
         }
