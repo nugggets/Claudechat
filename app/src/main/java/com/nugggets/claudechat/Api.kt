@@ -42,6 +42,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
 
     fun cancel() {
         cancelled = true
+        Diag.log("Запрос отменён пользователем")
         val c = conn
         if (c != null) {
             Thread {
@@ -86,6 +87,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             for (a in m.atts) {
                 val f = File(dir, a.file)
                 if (!f.exists()) {
+                    Diag.log("Вложение не найдено на диске: ${a.name} (${a.file})")
                     arr.put(textBlock("[Файл «" + a.name + "» больше недоступен]"))
                     continue
                 }
@@ -101,7 +103,9 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                     b.put("title", a.name)
                     arr.put(b)
                 } else {
-                    arr.put(textBlock("Файл «" + a.name + "»:\n\n" + f.readText(Charsets.UTF_8)))
+                    val txt = f.readText(Charsets.UTF_8)
+                    Diag.log("Вложение-текст «${a.name}»: ${txt.length} симв.")
+                    arr.put(textBlock("Файл «" + a.name + "»:\n\n" + txt))
                 }
             }
         }
@@ -135,17 +139,19 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 merged.add(m.role to blocks)
             }
         }
-        // Первое сообщение обязательно должно быть от user
         while (merged.isNotEmpty() && merged.first().first != "user") {
             merged.removeAt(0)
         }
 
         val arr = JSONArray()
+        val structSummary = StringBuilder()
         for ((role, blocks) in merged) {
             val j = JSONObject()
             j.put("role", role)
+            structSummary.append("role=").append(role).append(", blocks=").append(blocks.length()).append("; ")
             if (blocks.length() == 1 && blocks.optJSONObject(0)?.optString("type") == "text") {
-                j.put("content", blocks.getJSONObject(0).optString("text"))
+                val txt = blocks.getJSONObject(0).optString("text")
+                j.put("content", txt)
             } else {
                 j.put("content", blocks)
             }
@@ -160,7 +166,10 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             t.put("max_uses", 5)
             body.put("tools", JSONArray().put(t))
         }
-        return body.toString().toByteArray(Charsets.UTF_8)
+        val rawBytes = body.toString().toByteArray(Charsets.UTF_8)
+        Diag.lastReqBytes = rawBytes.size
+        Diag.lastReqPreview = "model=${cfg.model}, max_tokens=${cfg.maxTokens}, stream=${cfg.stream}, web=${cfg.web}, msgs=[${structSummary.toString().trimEnd()}]"
+        return rawBytes
     }
 
     /** Запрос с двумя повторами при перегрузке сервера или лимите (только до начала ответа). */
@@ -170,6 +179,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         onDelta: (String) -> Unit
     ): Res {
         onStatus("Подготовка запроса и вложений…")
+        Diag.log("Начало сборки запроса: историй=${history.size}, модель=${cfg.model}")
         val bytes = buildBody(history)
         val kb = bytes.size / 1024
         var attempt = 0
@@ -181,6 +191,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 val retry = c == 429 || c == 500 || c == 502 || c == 503 || c == 504 || c == 529
                 if (!retry || attempt >= 2 || cancelled) throw e
                 attempt++
+                Diag.log("Код ответа $c, автоповтор $attempt/2")
                 onStatus("Сервер перегружен (код $c), повтор $attempt/2…")
                 var waited = 0
                 while (waited < 2500 * attempt && !cancelled) {
@@ -199,10 +210,19 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         onDelta: (String) -> Unit
     ): Res {
         val res = Res()
+        val t0 = System.currentTimeMillis()
         val urlStr = endpoint()
+        Diag.lastEndpoint = urlStr
+        Diag.lastHttpCode = 0
+        Diag.lastContentType = ""
+        Diag.lastRespPreview = ""
+        Diag.lastSseEventsCount = 0
+        Diag.log("POST $urlStr (${bytes.size} байт, stream=${cfg.stream})")
+
         val c = try {
             URL(urlStr).openConnection() as HttpURLConnection
         } catch (e: Exception) {
+            Diag.logErr("openConnection", e)
             throw ApiError("Неверный адрес API: " + cfg.url)
         }
         conn = c
@@ -225,20 +245,35 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
 
             onStatus("Ожидание ответа от ${cfg.model}…")
             val code = c.responseCode
+            val ct = (c.contentType ?: "").lowercase()
+            Diag.lastHttpCode = code
+            Diag.lastContentType = ct
+            Diag.log("Ответ сервера: HTTP $code, Content-Type=$ct (${System.currentTimeMillis() - t0} мс)")
+
             if (code !in 200..299) {
                 val raw = readAll(c.errorStream)
-                throw ApiError(friendly(code, raw), code)
+                Diag.lastRespPreview = raw.take(1500)
+                val msg = friendly(code, raw)
+                Diag.lastError = "HTTP $code: $msg"
+                Diag.log("Ошибка HTTP $code: ${raw.replace("\n", " ").take(300)}")
+                throw ApiError(msg, code)
             }
-            val ct = (c.contentType ?: "").lowercase()
             if (cfg.stream && ct.contains("event-stream")) {
                 readSse(c, res, onStatus, onDelta)
             } else {
                 onStatus("Чтение полного ответа…")
-                parseFull(readAll(c.inputStream), res, onStatus, onDelta)
+                val full = readAll(c.inputStream)
+                Diag.lastRespPreview = full.take(1500)
+                parseFull(full, res, onStatus, onDelta)
             }
+            Diag.lastDurationMs = System.currentTimeMillis() - t0
+            Diag.log("Запрос успешно завершён за ${Diag.lastDurationMs} мс (in=${res.inTok}, out=${res.outTok}, stop=${res.stop})")
         } catch (e: ApiError) {
+            Diag.lastDurationMs = System.currentTimeMillis() - t0
             throw e
         } catch (e: Exception) {
+            Diag.lastDurationMs = System.currentTimeMillis() - t0
+            Diag.logErr("once", e)
             if (!cancelled) throw ApiError(netMsg(e))
         } finally {
             try {
@@ -264,11 +299,13 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         val r = BufferedReader(InputStreamReader(c.inputStream, Charsets.UTF_8))
         var emitted = 0
         var inThinking = false
-        var nonSseLines = StringBuilder()
+        val nonSseLines = StringBuilder()
+        val rawSample = StringBuilder()
         try {
             while (true) {
                 if (cancelled) break
                 val line = r.readLine() ?: break
+                if (rawSample.length < 1500) rawSample.append(line).append("\n")
                 val trimmed = line.trim()
                 if (trimmed.isEmpty() || trimmed.startsWith(":")) continue
                 if (!trimmed.startsWith("data:")) {
@@ -279,9 +316,11 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 }
                 val data = trimmed.substring(5).trim()
                 if (data.isEmpty() || data == "[DONE]") continue
+                Diag.lastSseEventsCount++
                 val o = try {
                     JSONObject(data)
                 } catch (e: Exception) {
+                    Diag.log("Не удалось разобрать JSON в SSE: ${data.take(150)}")
                     continue
                 }
 
@@ -399,12 +438,17 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                     }
                 } else if (type == "error") {
                     val m = o.optJSONObject("error")?.optString("message") ?: data
+                    Diag.lastError = "SSE error: $m"
+                    Diag.log("SSE вернул ошибку: $m")
                     throw ApiError(m)
                 }
             }
-            // Если прокси прислал обычный JSON с заголовком text/event-stream
+            Diag.lastRespPreview = rawSample.toString()
             if (emitted == 0 && nonSseLines.isNotEmpty()) {
+                Diag.log("SSE поток не содержал data:, пробуем разобрать как полный JSON (${nonSseLines.length} симв.)")
                 parseFull(nonSseLines.toString(), res, onStatus, onDelta)
+            } else if (emitted == 0) {
+                Diag.log("ВНИМАНИЕ: SSE поток завершился, но ни одного символа текста не получено (событий: ${Diag.lastSseEventsCount})")
             }
         } finally {
             try {
@@ -421,7 +465,6 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         onDelta: (String) -> Unit
     ) {
         val trimmed = raw.trim()
-        // Если прокси наоборот вернул SSE-поток с заголовком application/json
         if (trimmed.startsWith("event:") || trimmed.startsWith("data:")) {
             val sb = StringBuilder()
             for (line in trimmed.split("\n")) {
@@ -448,11 +491,13 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         val o = try {
             JSONObject(trimmed)
         } catch (e: Exception) {
+            Diag.log("Ошибка парсинга JSON ответа: ${trimmed.take(200)}")
             throw ApiError("Сервер вернул ответ не в формате JSON:\n" + trimmed.take(300))
         }
         if (o.optString("type") == "error" || o.has("error")) {
             val errObj = o.optJSONObject("error")
             val errMsg = errObj?.optString("message") ?: o.optString("error", trimmed.take(300))
+            Diag.lastError = "JSON error: $errMsg"
             throw ApiError(errMsg)
         }
 
@@ -476,7 +521,6 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         } else if (o.optString("content").isNotEmpty()) {
             sb.append(o.optString("content"))
         } else {
-            // OpenAI-совместимый формат
             val choices = o.optJSONArray("choices")
             if (choices != null && choices.length() > 0) {
                 val msg = choices.optJSONObject(0)?.optJSONObject("message")
@@ -493,6 +537,8 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         if (sb.isNotEmpty()) {
             onStatus("Готово")
             onDelta(sb.toString())
+        } else {
+            Diag.log("ВНИМАНИЕ: parseFull не нашёл текста в JSON: ${trimmed.take(250)}")
         }
         val u = o.optJSONObject("usage")
         if (u != null) {
@@ -553,9 +599,12 @@ fun fetchModels(cfg: Cfg): List<String> {
     if (u.endsWith("/messages")) u = u.removeSuffix("/messages")
     if (u.endsWith("/chat/completions")) u = u.removeSuffix("/chat/completions")
     if (u.endsWith("/v1")) u = u.removeSuffix("/v1")
+    val endpoint = "$u/v1/models?limit=1000"
+    Diag.log("GET $endpoint")
     val c = try {
-        URL("$u/v1/models?limit=1000").openConnection() as HttpURLConnection
+        URL(endpoint).openConnection() as HttpURLConnection
     } catch (e: Exception) {
+        Diag.logErr("fetchModels", e)
         throw ApiError("Неверный адрес API: " + cfg.url)
     }
     try {
@@ -571,6 +620,7 @@ fun fetchModels(cfg: Cfg): List<String> {
         val code = c.responseCode
         if (code !in 200..299) {
             val raw = c.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            Diag.log("fetchModels HTTP $code: ${raw.take(200)}")
             throw ApiError(Req.friendly(code, raw), code)
         }
         val raw = c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -582,10 +632,12 @@ fun fetchModels(cfg: Cfg): List<String> {
             if (id.isNotEmpty()) out.add(id)
         }
         if (out.isEmpty()) throw ApiError("Список моделей пуст")
+        Diag.log("Загружено моделей с сервера: ${out.size}")
         return out
     } catch (e: ApiError) {
         throw e
     } catch (e: Exception) {
+        Diag.logErr("fetchModels", e)
         throw ApiError("Ошибка: " + (e.message ?: e.javaClass.simpleName))
     } finally {
         try {

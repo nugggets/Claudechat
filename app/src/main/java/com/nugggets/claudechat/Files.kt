@@ -47,6 +47,7 @@ object Files {
             mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: mime
         }
         val id = System.nanoTime().toString()
+        Diag.log("Чтение вложения: name=$name, ext=$ext, mime=$mime")
         val dir = Store.attDir(c)
         return when {
             mime.startsWith("image/") -> importImage(c, uri, name, id, dir)

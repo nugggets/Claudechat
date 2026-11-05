@@ -213,6 +213,14 @@ class SettingsActivity : Activity() {
         result.setTextIsSelectable(true)
         add(result, 8)
         add(button("Сохранить", true) { save() }, 16)
+        add(button("🐞 Диагностика (скопировать для ИИ)", false) {
+            val report = Diag.buildReport(this, null)
+            val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("ClaudeDiag", report))
+            result.setTextColor(Pal.text)
+            result.text = "Отчёт диагностики скопирован в буфер обмена! Вставьте его в чат с ИИ.\n\n" + report.take(600) + "…"
+            Toast.makeText(this, "Отчёт диагностики скопирован", Toast.LENGTH_SHORT).show()
+        }, 12)
         add(button("Сбросить счётчик токенов", false) {
             Store.resetTokens(this)
             Toast.makeText(this, "Счётчик сброшен", Toast.LENGTH_SHORT).show()

@@ -187,6 +187,7 @@ class MainActivity : Activity() {
         titleView.setOnClickListener { renameChat() }
         bar.addView(titleView, LinearLayout.LayoutParams(0, WRAP, 1f))
         bar.addView(barBtn("+") { newChat() })
+        bar.addView(barBtn("🐞") { showDiag() })
         bar.addView(barBtn("⋮") { chatMenu() })
         bar.addView(barBtn("⚙") { startActivity(Intent(this, SettingsActivity::class.java)) })
         root.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -350,13 +351,21 @@ class MainActivity : Activity() {
                 retryBtn.setOnClickListener { start() }
                 btnRow.addView(retryBtn)
 
-                val modelBtn = label("Сменить модель", 14f, Pal.text, false)
-                modelBtn.setPadding(dp(14), dp(8), dp(14), dp(8))
+                val modelBtn = label("Модель", 14f, Pal.text, false)
+                modelBtn.setPadding(dp(12), dp(8), dp(12), dp(8))
                 modelBtn.background = rounded(Pal.field, dp(10).toFloat())
                 val mlp = LinearLayout.LayoutParams(WRAP, WRAP)
                 mlp.leftMargin = dp(8)
                 modelBtn.setOnClickListener { pickModel() }
                 btnRow.addView(modelBtn, mlp)
+
+                val diagBtn = label("🐞 Диагностика", 14f, Pal.text, true)
+                diagBtn.setPadding(dp(12), dp(8), dp(12), dp(8))
+                diagBtn.background = rounded(Pal.field, dp(10).toFloat())
+                val dlp = LinearLayout.LayoutParams(WRAP, WRAP)
+                dlp.leftMargin = dp(8)
+                diagBtn.setOnClickListener { showDiag() }
+                btnRow.addView(diagBtn, dlp)
 
                 card.addView(btnRow)
             }
@@ -814,8 +823,31 @@ class MainActivity : Activity() {
         }.show()
     }
 
+    private fun showDiag() {
+        val report = Diag.buildReport(this, chat, pending, note)
+        val sv = ScrollView(this)
+        val tv = label(report, 11f, Pal.text, false)
+        tv.setPadding(dp(16), dp(12), dp(16), dp(12))
+        tv.setTextIsSelectable(true)
+        tv.typeface = android.graphics.Typeface.MONOSPACE
+        sv.addView(tv)
+        AlertDialog.Builder(this)
+            .setTitle("🐞 Диагностика для ИИ")
+            .setView(sv)
+            .setPositiveButton("Скопировать отчёт") { _, _ ->
+                copy(report)
+            }
+            .setNeutralButton("Очистить лог") { _, _ ->
+                Diag.clear()
+                toast("Журнал очищен")
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
     private fun chatMenu() {
         val items = arrayOf(
+            "🐞 Диагностика (скопировать отчёт для ИИ)",
             "Переименовать чат",
             "Инструкция для этого чата",
             "Поделиться чатом",
@@ -824,19 +856,21 @@ class MainActivity : Activity() {
             "Удалить чат"
         )
         AlertDialog.Builder(this).setItems(items) { _, w ->
-            if (chat.msgs.isEmpty()) {
+            if (w == 0) {
+                showDiag()
+            } else if (chat.msgs.isEmpty()) {
                 toast("Чат пока пуст")
-            } else if (w == 0) {
-                renameChat()
             } else if (w == 1) {
+                renameChat()
+            } else if (w == 2) {
                 askText("Инструкция для этого чата (пусто — как в настройках)", chat.sys, true) { t ->
                     chat.sys = t
                     Store.save(this, chat)
                     updateInfo()
                 }
-            } else if (w == 2) {
-                shareText(Files.chatText(chat))
             } else if (w == 3) {
+                shareText(Files.chatText(chat))
+            } else if (w == 4) {
                 saveText = Files.chatText(chat)
                 val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
                 i.addCategory(Intent.CATEGORY_OPENABLE)
@@ -847,7 +881,7 @@ class MainActivity : Activity() {
                 } catch (e: Exception) {
                     toast("Не найдено приложение для сохранения файлов")
                 }
-            } else if (w == 4) {
+            } else if (w == 5) {
                 copy(Files.chatText(chat))
             } else {
                 deleteChat()
