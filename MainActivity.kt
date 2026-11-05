@@ -1,2 +1,1 @@
-        val bar = LinearLayout(this)
-        bar.orientation = LinearLayout.HORIZONTAL
+root.addView(statusBarSpacer(), LinearLayout.LayoutParams(MATCH, WRAP))

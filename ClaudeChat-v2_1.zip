@@ -1,0 +1,1 @@
+cd ~/claudechat && git rm -rqf . && unzip -qo ~/storage/downloads/ClaudeChat-v2_1.zip && grep -c 'versionName = "2.1"' app/build.gradle.kts && git add -A && git commit -qm "2.1" && git push origin HEAD
