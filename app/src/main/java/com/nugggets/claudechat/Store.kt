@@ -99,7 +99,7 @@ object Store {
     fun baseUrl(c: Context): String = p(c).getString("url", DEFAULT_URL) ?: DEFAULT_URL
     fun apiKey(c: Context): String = Crypto.dec(p(c).getString("key", "") ?: "")
     fun model(c: Context): String = p(c).getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
-    fun maxTokens(c: Context): Int = p(c).getInt("max", 4096)
+    fun maxTokens(c: Context): Int = p(c).getInt("max", 16384)
     fun system(c: Context): String = p(c).getString("system", "") ?: ""
     fun bearer(c: Context): Boolean = p(c).getBoolean("bearer", false)
     fun stream(c: Context): Boolean = p(c).getBoolean("stream", true)

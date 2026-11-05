@@ -13,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -32,6 +33,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 
 private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
@@ -41,6 +43,7 @@ private const val RQ_FILE = 11
 private const val RQ_CAM = 12
 private const val RQ_VOICE = 13
 private const val RQ_SAVE = 14
+private const val RQ_SAVE_ZIP = 15
 private const val MAX_PENDING = 10
 
 class MainActivity : Activity() {
@@ -60,6 +63,7 @@ class MainActivity : Activity() {
     private var importingStatus = ""
     private var camUri: Uri? = null
     private var saveText = ""
+    private var pendingZipOverrides: Map<String, String> = emptyMap()
     private val thumbs = HashMap<String, Bitmap?>()
 
     @Volatile
@@ -113,7 +117,6 @@ class MainActivity : Activity() {
     private fun loadCurrent() {
         val id = Store.curId(this)
         if (id.isNotEmpty() && chat.id == id && chat.msgs.isNotEmpty()) {
-            // Сохраняем текущий note, если это тот же самый чат
             val loaded = Store.load(this, id)
             if (loaded != null) chat = loaded
             return
@@ -285,6 +288,14 @@ class MainActivity : Activity() {
         return b
     }
 
+    private fun pillBtn(t: String, filled: Boolean, a: () -> Unit): TextView {
+        val b = label(t, 13f, if (filled) Pal.white else Pal.text, true)
+        b.setPadding(dp(12), dp(7), dp(12), dp(7))
+        b.background = rounded(if (filled) Pal.user else Pal.field, dp(10).toFloat())
+        b.setOnClickListener { a() }
+        return b
+    }
+
     private fun updateLiveStatusView() {
         val sv = liveStatusView ?: return
         val sec = ((System.currentTimeMillis() - startTimeMs) / 1000).coerceAtLeast(0)
@@ -300,9 +311,9 @@ class MainActivity : Activity() {
 
         if (chat.msgs.isEmpty() && note.isEmpty()) {
             val hint = label(
-                "Напишите первое сообщение или прикрепите файл (📎): фото, PDF, текст, код, docx, pptx, zip.\n\n" +
-                    "Если ключ ещё не указан, откройте настройки (⚙), введите API-ключ и проверьте его " +
-                    "кнопкой «Проверить ключ».",
+                "Напишите первое сообщение или прикрепите файл (📎): фото, PDF, текст, код, docx, pptx, xlsx, zip.\n\n" +
+                    "Встроен сборщик проектов: прикрепите ZIP-архив приложения, попросите ИИ внести изменения, " +
+                    "и прямо под ответом появится кнопка «📦 Скачать готовый ZIP» + команда для Termux!",
                 15f, Pal.sub, false
             )
             hint.setPadding(dp(8), dp(24), dp(8), dp(8))
@@ -469,6 +480,103 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setView(iv).setPositiveButton("Закрыть", null).show()
     }
 
+    // ---------- автоматическая сборка ZIP и файлов из ответа ИИ ----------
+
+    private fun saveZipToDownloads(zipName: String, overrides: Map<String, String>) {
+        val baseZip = Builder.findBaseZipFile(Store.attDir(this), chat)
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val resolver = contentResolver
+                // Удаляем старый файл с тем же именем в Загрузках, если он уже есть
+                try {
+                    resolver.delete(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        "${MediaStore.MediaColumns.DISPLAY_NAME}=?",
+                        arrayOf(zipName)
+                    )
+                } catch (e: Exception) {
+                }
+                val cv = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, zipName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+                    ?: throw Exception("Не удалось создать файл в Загрузках")
+                var count = 0
+                resolver.openOutputStream(uri)?.use { out ->
+                    count = Builder.writeMergedZip(baseZip, overrides, out)
+                }
+                toastLong("✅ Сохранено в Загрузки: $zipName (файлов в архиве: $count)")
+                Diag.log("ZIP сохранён в Загрузки: $zipName (файлов: $count, базовый архив: ${baseZip != null})")
+            } else {
+                @Suppress("DEPRECATION")
+                val dlDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                dlDir.mkdirs()
+                val outFile = File(dlDir, zipName)
+                var count = 0
+                FileOutputStream(outFile).use { out ->
+                    count = Builder.writeMergedZip(baseZip, overrides, out)
+                }
+                toastLong("✅ Сохранено: ${outFile.absolutePath} (файлов: $count)")
+                Diag.log("ZIP сохранён: ${outFile.absolutePath} (файлов: $count)")
+            }
+        } catch (e: Exception) {
+            Diag.logErr("saveZipToDownloads", e)
+            // Fallback через системный диалог выбора места сохранения
+            pendingZipOverrides = overrides
+            val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            i.addCategory(Intent.CATEGORY_OPENABLE)
+            i.type = "application/zip"
+            i.putExtra(Intent.EXTRA_TITLE, zipName)
+            try {
+                startActivityForResult(i, RQ_SAVE_ZIP)
+            } catch (ex: Exception) {
+                toastLong("Не удалось сохранить ZIP: ${e.message}")
+            }
+        }
+    }
+
+    private fun showExtractedFilesDialog(files: Map<String, String>, zipName: String) {
+        val names = files.keys.toList()
+        val labels = names.map { "$it (${files[it]?.length ?: 0} симв.)" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Файлы в ответе (${names.size})")
+            .setItems(labels) { _, which ->
+                val path = names[which]
+                val content = files[path] ?: ""
+                val sv = ScrollView(this)
+                val tv = label(content, 11f, Pal.text, false)
+                tv.typeface = android.graphics.Typeface.MONOSPACE
+                tv.setPadding(dp(14), dp(12), dp(14), dp(12))
+                tv.setTextIsSelectable(true)
+                sv.addView(tv)
+                AlertDialog.Builder(this)
+                    .setTitle(path)
+                    .setView(sv)
+                    .setPositiveButton("Скопировать код") { _, _ -> copy(content) }
+                    .setNeutralButton("Сохранить файл") { _, _ ->
+                        saveText = content
+                        val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+                        i.addCategory(Intent.CATEGORY_OPENABLE)
+                        i.type = "text/plain"
+                        i.putExtra(Intent.EXTRA_TITLE, path.substringAfterLast('/'))
+                        try {
+                            startActivityForResult(i, RQ_SAVE)
+                        } catch (e: Exception) {
+                            toast("Не удалось открыть сохранение")
+                        }
+                    }
+                    .setNegativeButton("Назад") { _, _ -> showExtractedFilesDialog(files, zipName) }
+                    .show()
+            }
+            .setPositiveButton("📦 Скачать весь ZIP ($zipName)") { _, _ ->
+                saveZipToDownloads(zipName, files)
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
     private fun addBubble(idx: Int, m: Msg, isLast: Boolean, size: Float) {
         val user = m.role == "user"
         val live = sending && isLast && !user
@@ -486,7 +594,7 @@ class MainActivity : Activity() {
         }
         if (live) liveBubble = tv
 
-        val lp = LinearLayout.LayoutParams( if (live) MATCH else WRAP, WRAP)
+        val lp = LinearLayout.LayoutParams(if (live) MATCH else WRAP, WRAP)
         lp.gravity = if (user) Gravity.END else Gravity.START
         lp.topMargin = dp(10)
         if (user) lp.leftMargin = dp(40) else lp.rightMargin = dp(20)
@@ -533,6 +641,56 @@ class MainActivity : Activity() {
         }
 
         if (live) return
+
+        // Если это ответ ИИ, проверяем наличие сгенерированных файлов проекта и команд Termux
+        if (!user && m.text.isNotEmpty()) {
+            val extractedFiles = Builder.extractFiles(m.text)
+            val extractedCmds = Builder.extractCommands(m.text)
+            if (extractedFiles.isNotEmpty() || extractedCmds.isNotEmpty()) {
+                val devScroll = HorizontalScrollView(this)
+                devScroll.isHorizontalScrollBarEnabled = false
+                val devRow = LinearLayout(this)
+                devRow.orientation = LinearLayout.HORIZONTAL
+                devRow.setPadding(dp(2), dp(6), dp(2), dp(2))
+
+                if (extractedFiles.isNotEmpty()) {
+                    val zipName = Builder.suggestZipName(m.text, chat)
+                    val baseExists = Builder.findBaseZipFile(Store.attDir(this), chat) != null
+                    val zipLabel = if (baseExists) {
+                        "📦 Скачать $zipName (обновлено: ${extractedFiles.size})"
+                    } else {
+                        "📦 Скачать $zipName (${extractedFiles.size} файл.)"
+                    }
+                    val zipBtn = pillBtn(zipLabel, true) {
+                        saveZipToDownloads(zipName, extractedFiles)
+                    }
+                    val zlp = LinearLayout.LayoutParams(WRAP, WRAP)
+                    zlp.rightMargin = dp(8)
+                    devRow.addView(zipBtn, zlp)
+
+                    val filesBtn = pillBtn("📂 Файлы (${extractedFiles.size})", false) {
+                        showExtractedFilesDialog(extractedFiles, zipName)
+                    }
+                    val flp = LinearLayout.LayoutParams(WRAP, WRAP)
+                    flp.rightMargin = dp(8)
+                    devRow.addView(filesBtn, flp)
+                }
+
+                if (extractedCmds.isNotEmpty()) {
+                    val bestCmd = extractedCmds.last()
+                    val cmdBtn = pillBtn("💻 Скопировать команду Termux", false) {
+                        copy(bestCmd)
+                    }
+                    val clp = LinearLayout.LayoutParams(WRAP, WRAP)
+                    clp.rightMargin = dp(8)
+                    devRow.addView(cmdBtn, clp)
+                }
+
+                devScroll.addView(devRow)
+                box.addView(devScroll, LinearLayout.LayoutParams(MATCH, WRAP))
+            }
+        }
+
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         if (user) {
@@ -640,7 +798,7 @@ class MainActivity : Activity() {
             toast("Можно прикрепить не больше $MAX_PENDING файлов за раз")
             return
         }
-        val items = arrayOf("Фото из галереи", "Сделать фото", "Файл: PDF, текст, код, docx, pptx, zip")
+        val items = arrayOf("Фото из галереи", "Сделать фото", "Файл: ZIP, PDF, код, текст, docx, pptx, xlsx")
         AlertDialog.Builder(this).setItems(items) { _, w ->
             if (w == 0) pickFiles(true) else if (w == 1) takePhoto() else pickFiles(false)
         }.show()
@@ -777,6 +935,21 @@ class MainActivity : Activity() {
                 }
             }
             saveText = ""
+        } else if (requestCode == RQ_SAVE_ZIP) {
+            val u = data?.data
+            if (resultCode == RESULT_OK && u != null && pendingZipOverrides.isNotEmpty()) {
+                try {
+                    val baseZip = Builder.findBaseZipFile(Store.attDir(this), chat)
+                    val o = contentResolver.openOutputStream(u)
+                    if (o != null) {
+                        val count = o.use { Builder.writeMergedZip(baseZip, pendingZipOverrides, it) }
+                        toastLong("✅ ZIP сохранён (файлов: $count)")
+                    }
+                } catch (e: Exception) {
+                    toastLong("Не удалось сохранить ZIP: ${e.message}")
+                }
+            }
+            pendingZipOverrides = emptyMap()
         }
     }
 
@@ -1047,11 +1220,16 @@ class MainActivity : Activity() {
         sending = true
         gen++
         val my = gen
-        val sys = if (chat.sys.isNotBlank()) chat.sys else Store.system(this)
+        val userSys = if (chat.sys.isNotBlank()) chat.sys else Store.system(this)
+        val fullSys = if (userSys.isBlank()) {
+            Builder.DEV_SYSTEM_ADDON.trim()
+        } else {
+            userSys + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+        }
         val temp = Store.temp(this).replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 1.0)
         val cfg = Cfg(
             Store.baseUrl(this), Store.apiKey(this), Store.model(this), Store.maxTokens(this),
-            sys, Store.bearer(this), Store.stream(this), temp, Store.web(this)
+            fullSys, Store.bearer(this), Store.stream(this), temp, Store.web(this)
         )
         val r = Req(cfg, Store.attDir(this))
         req = r

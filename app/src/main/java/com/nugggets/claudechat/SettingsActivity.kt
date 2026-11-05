@@ -164,7 +164,7 @@ class SettingsActivity : Activity() {
         add(hs, 8)
 
         small("Максимум токенов в ответе")
-        eMax = field("4096", Store.maxTokens(this).toString())
+        eMax = field("16384", Store.maxTokens(this).toString())
         eMax.inputType = InputType.TYPE_CLASS_NUMBER
         add(eMax, 4)
 
@@ -309,7 +309,7 @@ class SettingsActivity : Activity() {
 
     private fun save() {
         val cfg = readCfg(true, 0)
-        val max = (eMax.text.toString().trim().toIntOrNull() ?: 4096).coerceIn(1, 128000)
+        val max = (eMax.text.toString().trim().toIntOrNull() ?: 16384).coerceIn(1, 128000)
         Store.saveSettings(
             this, cfg.url, cfg.key, cfg.model, max, eSys.text.toString().trim(),
             rbB.isChecked, cbStream.isChecked, seek.progress + 10, cbDark.isChecked,

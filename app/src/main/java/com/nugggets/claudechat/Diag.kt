@@ -74,7 +74,7 @@ object Diag {
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         sb.append("=== CLAUDE CHAT DIAGNOSTIC REPORT ===\n")
         sb.append("Время: ").append(fmt.format(Date())).append("\n")
-        sb.append("Версия приложения: 1.6 (versionCode 7)\n")
+        sb.append("Версия приложения: 1.7 (versionCode 8)\n")
         sb.append("Устройство: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL)
             .append(" (Android ").append(Build.VERSION.RELEASE).append(", SDK ").append(Build.VERSION.SDK_INT).append(")\n\n")
 
