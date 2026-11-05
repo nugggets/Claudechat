@@ -6,11 +6,11 @@
 
 ```
 mkdir -p ~/claudechat && cd ~/claudechat
-unzip -o ~/storage/downloads/ClaudeChat-v1_4.zip
-grep -c 'versionName = "1.4"' app/build.gradle.kts
+unzip -o ~/storage/downloads/ClaudeChat-v1_5.zip
+grep -c 'versionName = "1.5"' app/build.gradle.kts
 [ -d .git ] || { git init -b main && git remote add origin https://github.com/Nugggets/claudechat.git; }
 git add -A
-git commit -m "1.4"
+git commit -m "1.5"
 git pull --no-rebase -X ours --no-edit
 git push -u origin main
 ```
@@ -73,3 +73,4 @@ git push -u origin main
 - 1.2 — загрузка списка моделей с сервера (исправляет ошибку «Invalid model name» на прокси).
 - 1.3 — прикрепление zip-архивов.
 - 1.4 — улучшена поддержка zip-архивов (определение по MIME-типу, фильтрация бинарных файлов, отображение структуры архива) и обновлён интерфейс.
+- 1.5 — живая индикация действий ИИ в реальном времени (подготовка, отправка, размышления, инструменты, печать ответа с секундомером), предпросмотр распакованных вложений по нажатию, автосклейка подряд идущих сообщений при повторе после ошибки.

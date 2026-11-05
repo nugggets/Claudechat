@@ -18,7 +18,7 @@ import java.util.zip.ZipInputStream
 /** Приём файлов: превращает выбранный файл в вложение, которое можно отправить в API. */
 object Files {
     const val MAX_PDF = 25L * 1024 * 1024
-    const val MAX_TEXT_CHARS = 300000
+    const val MAX_TEXT_CHARS = 120000
     const val MAX_SIDE = 1568
 
     fun nameOf(c: Context, uri: Uri): String {

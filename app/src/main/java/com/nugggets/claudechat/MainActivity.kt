@@ -27,6 +27,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -49,11 +50,14 @@ class MainActivity : Activity() {
     private var req: Req? = null
     private var gen = 0
     private var note = ""
+    private var liveStatus = ""
+    private var startTimeMs = 0L
     private var draft = ""
     private var built = false
 
     private val pending = mutableListOf<Att>()
     private var importing = 0
+    private var importingStatus = ""
     private var camUri: Uri? = null
     private var saveText = ""
     private val thumbs = HashMap<String, Bitmap?>()
@@ -70,6 +74,16 @@ class MainActivity : Activity() {
     private lateinit var pendScroll: HorizontalScrollView
     private lateinit var pendBox: LinearLayout
     private var liveBubble: TextView? = null
+    private var liveStatusView: TextView? = null
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (sending) {
+                updateLiveStatusView()
+                handler.postDelayed(this, 500)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,6 +112,12 @@ class MainActivity : Activity() {
 
     private fun loadCurrent() {
         val id = Store.curId(this)
+        if (id.isNotEmpty() && chat.id == id && chat.msgs.isNotEmpty()) {
+            // Сохраняем текущий note, если это тот же самый чат
+            val loaded = Store.load(this, id)
+            if (loaded != null) chat = loaded
+            return
+        }
         val loaded = if (id.isNotEmpty()) Store.load(this, id) else null
         chat = loaded ?: Store.newChat()
         note = ""
@@ -264,9 +284,17 @@ class MainActivity : Activity() {
         return b
     }
 
+    private fun updateLiveStatusView() {
+        val sv = liveStatusView ?: return
+        val sec = ((System.currentTimeMillis() - startTimeMs) / 1000).coerceAtLeast(0)
+        val st = if (liveStatus.isNotEmpty()) liveStatus else "ИИ обрабатывает запрос…"
+        sv.text = "$st ($sec с)"
+    }
+
     private fun render() {
         box.removeAllViews()
         liveBubble = null
+        liveStatusView = null
         val size = Store.textSize(this).toFloat()
 
         if (chat.msgs.isEmpty() && note.isEmpty()) {
@@ -295,17 +323,47 @@ class MainActivity : Activity() {
             addBubble(i, m, i == chat.msgs.size - 1, size)
         }
 
-        if (note.isNotEmpty()) {
-            val n = label(note, 14f, Pal.err, false)
-            n.setPadding(dp(12), dp(10), dp(12), dp(10))
+        val lastIsUser = !sending && chat.msgs.isNotEmpty() && chat.msgs[chat.msgs.size - 1].role == "user"
+        if (note.isNotEmpty() || lastIsUser) {
+            val card = LinearLayout(this)
+            card.orientation = LinearLayout.VERTICAL
+            card.setPadding(dp(14), dp(12), dp(14), dp(12))
+            card.background = rounded(Pal.bar, dp(12).toFloat())
+
+            val msgText = if (note.isNotEmpty()) {
+                note
+            } else {
+                "Ответ на последнее сообщение ещё не получен."
+            }
+            val n = label(msgText, 14f, Pal.err, false)
             n.setTextIsSelectable(true)
-            n.background = rounded(Pal.bar, dp(12).toFloat())
+            card.addView(n)
+
+            if (lastIsUser) {
+                val btnRow = LinearLayout(this)
+                btnRow.orientation = LinearLayout.HORIZONTAL
+                btnRow.setPadding(0, dp(8), 0, 0)
+
+                val retryBtn = label("🔄 Получить ответ", 14f, Pal.white, true)
+                retryBtn.setPadding(dp(14), dp(8), dp(14), dp(8))
+                retryBtn.background = rounded(Pal.user, dp(10).toFloat())
+                retryBtn.setOnClickListener { start() }
+                btnRow.addView(retryBtn)
+
+                val modelBtn = label("Сменить модель", 14f, Pal.text, false)
+                modelBtn.setPadding(dp(14), dp(8), dp(14), dp(8))
+                modelBtn.background = rounded(Pal.field, dp(10).toFloat())
+                val mlp = LinearLayout.LayoutParams(WRAP, WRAP)
+                mlp.leftMargin = dp(8)
+                modelBtn.setOnClickListener { pickModel() }
+                btnRow.addView(modelBtn, mlp)
+
+                card.addView(btnRow)
+            }
+
             val lp = LinearLayout.LayoutParams(MATCH, WRAP)
             lp.topMargin = dp(10)
-            box.addView(n, lp)
-            if (!sending && chat.msgs.isNotEmpty() && chat.msgs[chat.msgs.size - 1].role == "user") {
-                box.addView(smallBtn("Повторить запрос") { start() })
-            }
+            box.addView(card, lp)
         }
         scrollDown()
     }
@@ -328,6 +386,38 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun previewAtt(a: Att) {
+        val f = File(Store.attDir(this), a.file)
+        if (!f.exists()) {
+            toast("Файл вложения не найден")
+            return
+        }
+        if (a.isImage) {
+            val bmp = thumb(a)
+            if (bmp != null) showImage(bmp)
+            return
+        }
+        if (a.isPdf) {
+            toast("PDF-документ (${f.length() / 1024} КБ)")
+            return
+        }
+        val txt = try {
+            f.readText(Charsets.UTF_8)
+        } catch (e: Exception) {
+            "Не удалось прочитать содержимое"
+        }
+        val sv = ScrollView(this)
+        val tv = label(txt.take(15000) + if (txt.length > 15000) "\n\n…(всего ${txt.length} симв.)" else "", 12f, Pal.text, false)
+        tv.setPadding(dp(16), dp(12), dp(16), dp(12))
+        tv.setTextIsSelectable(true)
+        sv.addView(tv)
+        AlertDialog.Builder(this)
+            .setTitle(a.name + " (${txt.length} симв.)")
+            .setView(sv)
+            .setPositiveButton("Закрыть", null)
+            .show()
+    }
+
     private fun attView(a: Att): View {
         if (a.isImage) {
             val bmp = thumb(a)
@@ -344,9 +434,19 @@ class MainActivity : Activity() {
                 return iv
             }
         }
-        val t = label((if (a.isImage) "🖼 " else "📄 ") + a.name, 14f, Pal.white, false)
+        val icon = when {
+            a.isImage -> "🖼 "
+            a.name.endsWith(".zip", true) -> "📦 "
+            else -> "📄 "
+        }
+        val f = File(Store.attDir(this), a.file)
+        val sizeInfo = if (f.exists()) " (${maxOf(1L, f.length() / 1024)} КБ)" else ""
+        val t = label(icon + a.name + sizeInfo, 14f, Pal.white, true)
         t.maxLines = 2
         t.ellipsize = TextUtils.TruncateAt.END
+        t.setPadding(dp(10), dp(6), dp(10), dp(6))
+        t.background = rounded(0x33000000, dp(8).toFloat())
+        t.setOnClickListener { previewAtt(a) }
         val lp = LinearLayout.LayoutParams(WRAP, WRAP)
         lp.bottomMargin = dp(6)
         t.layoutParams = lp
@@ -363,13 +463,21 @@ class MainActivity : Activity() {
     private fun addBubble(idx: Int, m: Msg, isLast: Boolean, size: Float) {
         val user = m.role == "user"
         val live = sending && isLast && !user
+
         val tv = TextView(this)
         tv.textSize = size
         tv.setTextColor(if (user) Pal.white else Pal.text)
         tv.setTextIsSelectable(true)
-        tv.text = if (user) m.text else if (m.text.isEmpty()) "…" else Md.render(m.text)
+        tv.text = if (user) {
+            m.text
+        } else if (m.text.isEmpty()) {
+            "Ожидание первых токенов от модели…"
+        } else {
+            Md.render(m.text)
+        }
         if (live) liveBubble = tv
-        val lp = LinearLayout.LayoutParams(WRAP, WRAP)
+
+        val lp = LinearLayout.LayoutParams( if (live) MATCH else WRAP, WRAP)
         lp.gravity = if (user) Gravity.END else Gravity.START
         lp.topMargin = dp(10)
         if (user) lp.leftMargin = dp(40) else lp.rightMargin = dp(20)
@@ -381,6 +489,33 @@ class MainActivity : Activity() {
             wrap.background = rounded(Pal.user, dp(14).toFloat())
             for (a in m.atts) wrap.addView(attView(a))
             if (m.text.isNotEmpty()) wrap.addView(tv, LinearLayout.LayoutParams(WRAP, WRAP))
+            box.addView(wrap, lp)
+        } else if (live) {
+            val wrap = LinearLayout(this)
+            wrap.orientation = LinearLayout.VERTICAL
+            wrap.setPadding(dp(12), dp(10), dp(12), dp(10))
+            wrap.background = rounded(Pal.bot, dp(14).toFloat())
+
+            val statusRow = LinearLayout(this)
+            statusRow.orientation = LinearLayout.HORIZONTAL
+            statusRow.gravity = Gravity.CENTER_VERTICAL
+            statusRow.setPadding(dp(8), dp(6), dp(10), dp(6))
+            statusRow.background = rounded(Pal.code, dp(8).toFloat())
+
+            val pb = ProgressBar(this, null, android.R.attr.progressBarStyleSmall)
+            statusRow.addView(pb, LinearLayout.LayoutParams(dp(18), dp(18)))
+
+            val sv = label("", 12f, Pal.sub, true)
+            val slp = LinearLayout.LayoutParams(0, WRAP, 1f)
+            slp.leftMargin = dp(8)
+            statusRow.addView(sv, slp)
+            liveStatusView = sv
+            updateLiveStatusView()
+
+            val srlp = LinearLayout.LayoutParams(MATCH, WRAP)
+            srlp.bottomMargin = dp(8)
+            wrap.addView(statusRow, srlp)
+            wrap.addView(tv, LinearLayout.LayoutParams(MATCH, WRAP))
             box.addView(wrap, lp)
         } else {
             tv.setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -407,11 +542,12 @@ class MainActivity : Activity() {
     }
 
     private fun updateLast() {
+        updateLiveStatusView()
         val tv = liveBubble ?: return
         if (chat.msgs.isEmpty()) return
         val m = chat.msgs[chat.msgs.size - 1]
         val atBottom = isNearBottom()
-        tv.text = if (m.text.isEmpty()) "…" else Md.render(m.text)
+        tv.text = if (m.text.isEmpty()) "Ожидание первых токенов от модели…" else Md.render(m.text)
         if (atBottom) scrollDown()
     }
 
@@ -465,7 +601,12 @@ class MainActivity : Activity() {
         pendBox.removeAllViews()
         pendScroll.visibility = if (pending.isEmpty() && importing == 0) View.GONE else View.VISIBLE
         for (a in pending) {
-            val c = label((if (a.isImage) "🖼 " else "📄 ") + a.name.take(26) + "   ✕", 13f, Pal.text, false)
+            val icon = when {
+                a.isImage -> "🖼 "
+                a.name.endsWith(".zip", true) -> "📦 "
+                else -> "📄 "
+            }
+            val c = label(icon + a.name.take(26) + "   ✕", 13f, Pal.text, false)
             c.setPadding(dp(12), dp(7), dp(12), dp(7))
             c.background = rounded(Pal.field, dp(14).toFloat())
             c.setOnClickListener {
@@ -478,7 +619,8 @@ class MainActivity : Activity() {
             pendBox.addView(c, lp)
         }
         if (importing > 0) {
-            val c = label("⏳ обработка файла…", 13f, Pal.sub, false)
+            val st = if (importingStatus.isNotEmpty()) importingStatus else "⏳ распаковка и чтение файла…"
+            val c = label(st, 13f, Pal.sub, false)
             c.setPadding(dp(12), dp(7), dp(12), dp(7))
             pendBox.addView(c)
         }
@@ -534,7 +676,9 @@ class MainActivity : Activity() {
                 toast("Лишние файлы пропущены: максимум $MAX_PENDING")
                 break
             }
+            val rawName = Files.nameOf(this, u)
             importing++
+            importingStatus = "⏳ Чтение «$rawName»…"
             if (built) renderPending()
             Thread {
                 var att: Att? = null
@@ -554,6 +698,7 @@ class MainActivity : Activity() {
                 val e2 = err
                 handler.post {
                     importing--
+                    if (importing == 0) importingStatus = ""
                     if (a2 != null) pending.add(a2)
                     if (e2 != null) toastLong(e2)
                     if (built) renderPending()
@@ -759,10 +904,14 @@ class MainActivity : Activity() {
     }
 
     private fun send() {
+        if (sending) {
+            toast("ИИ уже отвечает. Дождитесь ответа или нажмите ■")
+            return
+        }
         val t = input.text.toString().trim()
         if (t.isEmpty() && pending.isEmpty()) return
         if (importing > 0) {
-            toast("Файл ещё обрабатывается")
+            toast("Файл ещё обрабатывается, подождите секунду")
             return
         }
         if (Store.apiKey(this).isEmpty()) {
@@ -851,7 +1000,9 @@ class MainActivity : Activity() {
     private fun start() {
         if (sending) return
         note = ""
-        chat.updated = System.currentTimeMillis()
+        liveStatus = "Подготовка запроса…"
+        startTimeMs = System.currentTimeMillis()
+        chat.updated = startTimeMs
         Store.setCur(this, chat.id)
         val history = chat.msgs
             .filter { it.text.isNotEmpty() || it.atts.isNotEmpty() }
@@ -873,26 +1024,39 @@ class MainActivity : Activity() {
         updateTitle()
         updateSendBtn()
         render()
+        handler.removeCallbacks(ticker)
+        handler.postDelayed(ticker, 500)
 
         val acc = StringBuilder()
         Thread {
             var res: Res? = null
             var err: String? = null
             try {
-                res = r.run(history) { d ->
-                    acc.append(d)
-                    if (!uiPending) {
-                        uiPending = true
-                        val snap = acc.toString()
-                        handler.postDelayed({
-                            uiPending = false
+                res = r.run(
+                    history,
+                    onStatus = { st ->
+                        handler.post {
                             if (sending && gen == my) {
-                                msg.text = snap
-                                updateLast()
+                                liveStatus = st
+                                updateLiveStatusView()
                             }
-                        }, 60)
+                        }
+                    },
+                    onDelta = { d ->
+                        acc.append(d)
+                        if (!uiPending) {
+                            uiPending = true
+                            val snap = acc.toString()
+                            handler.postDelayed({
+                                uiPending = false
+                                if (sending && gen == my) {
+                                    msg.text = snap
+                                    updateLast()
+                                }
+                            }, 50)
+                        }
                     }
-                }
+                )
             } catch (e: ApiError) {
                 err = e.message
             } catch (e: Exception) {
@@ -904,14 +1068,16 @@ class MainActivity : Activity() {
             val stopped = r.cancelled
             handler.post {
                 if (gen != my) return@post
+                handler.removeCallbacks(ticker)
                 sending = false
                 req = null
+                liveStatus = ""
                 msg.text = finalText
                 var n = ""
                 if (e2 != null) {
                     n = e2
                 } else if (finalText.isEmpty()) {
-                    n = if (stopped) "Остановлено." else "Сервер вернул пустой ответ."
+                    n = if (stopped) "Остановлено пользователем." else "Сервер вернул пустой ответ. Проверьте выбранную модель («" + cfg.model + "») или нажмите «Загрузить список моделей с сервера» в настройках."
                 } else if (r2 != null && r2.stop == "max_tokens") {
                     n = "Ответ обрезан: достигнут лимит токенов ответа. " +
                         "Увеличьте «Макс. токенов ответа» в настройках."
