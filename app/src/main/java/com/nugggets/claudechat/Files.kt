@@ -51,9 +51,12 @@ object Files {
         return when {
             mime.startsWith("image/") -> importImage(c, uri, name, id, dir)
             mime == "application/pdf" || ext == "pdf" -> importPdf(c, uri, name, id, dir)
-            ext == "docx" -> importOffice(c, uri, name, id, dir, true)
-            ext == "pptx" -> importOffice(c, uri, name, id, dir, false)
-            ext == "zip" -> importZip(c, uri, name, id, dir)
+            ext == "docx" || mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ->
+                importOffice(c, uri, name, id, dir, true)
+            ext == "pptx" || mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" ->
+                importOffice(c, uri, name, id, dir, false)
+            ext == "zip" || mime == "application/zip" || mime == "application/x-zip-compressed" ->
+                importZip(c, uri, name, id, dir)
             else -> importText(c, uri, name, id, dir)
         }
     }
@@ -213,18 +216,33 @@ object Files {
     // ---------- zip ----------
 
     private fun importZip(c: Context, uri: Uri, name: String, id: String, dir: File): Att {
-        val skipDirs = listOf(".git/", "build/", ".gradle/", "node_modules/", "__pycache__/", ".idea/")
+        val skipDirs = listOf(".git/", "build/", ".gradle/", "node_modules/", "__pycache__/", ".idea/", ".DS_Store")
+        val binExts = setOf(
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "mp3", "mp4", "wav", "ogg",
+            "apk", "aab", "dex", "so", "jar", "keystore", "jks", "class", "pdf", "woff", "woff2", "ttf", "otf"
+        )
         val index = StringBuilder()
         val body = StringBuilder()
         var skipped = 0
+        var totalEntries = 0
         open(c, uri, name).use { raw ->
             val z = ZipInputStream(raw)
             while (true) {
-                val e = z.nextEntry ?: break
+                val e = try {
+                    z.nextEntry
+                } catch (ex: Exception) {
+                    break
+                } ?: break
                 if (e.isDirectory) continue
                 val en = e.name
                 if (skipDirs.any { en.contains(it) }) {
                     skipped++
+                    continue
+                }
+                totalEntries++
+                val ext = en.substringAfterLast('.', "").lowercase()
+                if (ext in binExts) {
+                    index.append(en).append("  (бинарный файл, пропущен)\n")
                     continue
                 }
                 val bytes = readUpTo(z, 1024 * 1024)
@@ -248,11 +266,15 @@ object Files {
                 body.append("===== ").append(en).append(" =====\n").append(txt).append("\n\n")
             }
         }
-        if (body.isEmpty()) throw Exception("В архиве нет текстовых файлов: $name")
+        if (totalEntries == 0 && skipped == 0) throw Exception("Архив пуст или повреждён: $name")
         val sb = StringBuilder()
         sb.append("Архив: ").append(name).append("\n\nСписок файлов:\n").append(index)
         if (skipped > 0) sb.append("Пропущено служебных файлов (.git, build и т.п.): ").append(skipped).append("\n")
-        sb.append("\n").append(body)
+        if (body.isNotEmpty()) {
+            sb.append("\n").append(body)
+        } else {
+            sb.append("\n(В архиве нет текстовых файлов, показана только структура архива)\n")
+        }
         return saveText(dir, id, name, sb.toString())
     }
 

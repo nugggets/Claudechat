@@ -6,11 +6,11 @@
 
 ```
 mkdir -p ~/claudechat && cd ~/claudechat
-unzip -o ~/storage/downloads/ClaudeChat-v1_3.zip
-grep -c 'versionName = "1.0"' app/build.gradle.kts
+unzip -o ~/storage/downloads/ClaudeChat-v1_4.zip
+grep -c 'versionName = "1.4"' app/build.gradle.kts
 [ -d .git ] || { git init -b main && git remote add origin https://github.com/Nugggets/claudechat.git; }
 git add -A
-git commit -m "v1.3"
+git commit -m "1.4"
 git pull --no-rebase -X ours --no-edit
 git push -u origin main
 ```
@@ -48,7 +48,7 @@ git push -u origin main
   - `SettingsActivity.kt` — настройки и проверка ключа
   - `HistoryActivity.kt` — список чатов
   - `Api.kt` — запрос к API (SSE-поток и обычный ответ), понятные ошибки
-  - `Files.kt` — приём вложений (фото, PDF, текст, docx, pptx) и экспорт чата
+  - `Files.kt` — приём вложений (фото, PDF, текст, docx, pptx, zip) и экспорт чата
   - `Store.kt` — настройки, шифрование ключа, хранение чатов и вложений
   - `Md.kt` — простое оформление ответа (заголовки, жирный, код, списки)
   - `Ui.kt` — цвета и общие элементы
@@ -72,3 +72,4 @@ git push -u origin main
 - 1.1 — вложения (фото, камера, PDF, текст, код, docx, pptx), «Поделиться» из других приложений, голосовой ввод, правка и удаление сообщений, меню чата, поиск и экспорт истории, температура, веб-поиск, автоповтор при перегрузке, курсив и цитаты.
 - 1.2 — загрузка списка моделей с сервера (исправляет ошибку «Invalid model name» на прокси).
 - 1.3 — прикрепление zip-архивов.
+- 1.4 — улучшена поддержка zip-архивов (определение по MIME-типу, фильтрация бинарных файлов, отображение структуры архива) и обновлён интерфейс.

@@ -271,7 +271,7 @@ class MainActivity : Activity() {
 
         if (chat.msgs.isEmpty() && note.isEmpty()) {
             val hint = label(
-                "Напишите первое сообщение или прикрепите файл (📎): фото, PDF, текст, код, docx, pptx.\n\n" +
+                "Напишите первое сообщение или прикрепите файл (📎): фото, PDF, текст, код, docx, pptx, zip.\n\n" +
                     "Если ключ ещё не указан, откройте настройки (⚙), введите API-ключ и проверьте его " +
                     "кнопкой «Проверить ключ».",
                 15f, Pal.sub, false
@@ -489,7 +489,7 @@ class MainActivity : Activity() {
             toast("Можно прикрепить не больше $MAX_PENDING файлов за раз")
             return
         }
-        val items = arrayOf("Фото из галереи", "Сделать фото", "Файл: PDF, текст, код, docx, pptx")
+        val items = arrayOf("Фото из галереи", "Сделать фото", "Файл: PDF, текст, код, docx, pptx, zip")
         AlertDialog.Builder(this).setItems(items) { _, w ->
             if (w == 0) pickFiles(true) else if (w == 1) takePhoto() else pickFiles(false)
         }.show()
