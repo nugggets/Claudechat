@@ -24,7 +24,8 @@ class Cfg(
     val stream: Boolean,
     val temp: Double? = null,
     val web: Boolean = false,
-    val think: Boolean = false
+    val think: Boolean = false,
+    val cache: Boolean = false
 )
 
 class Res {
@@ -129,7 +130,18 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         val body = JSONObject()
         body.put("model", cfg.model)
         body.put("max_tokens", cfg.maxTokens)
-        if (cfg.system.isNotBlank()) body.put("system", cfg.system)
+        if (cfg.system.isNotBlank()) {
+            if (cfg.cache) {
+                // Кеширование промпта (только официальный API): повторяющаяся часть стоит дешевле и обрабатывается быстрее.
+                val blk = JSONObject()
+                blk.put("type", "text")
+                blk.put("text", cfg.system)
+                blk.put("cache_control", JSONObject().put("type", "ephemeral"))
+                body.put("system", JSONArray().put(blk))
+            } else {
+                body.put("system", cfg.system)
+            }
+        }
         val thinkOn = cfg.think && cfg.maxTokens > 2048
         if (thinkOn) {
             val th = JSONObject()

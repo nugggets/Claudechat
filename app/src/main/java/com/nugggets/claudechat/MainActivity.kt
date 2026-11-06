@@ -1220,9 +1220,20 @@ class MainActivity : Activity() {
         startTimeMs = System.currentTimeMillis()
         chat.updated = startTimeMs
         Store.setCur(this, chat.id)
-        val history = chat.msgs
+        val full = chat.msgs
             .filter { it.text.isNotEmpty() || it.atts.isNotEmpty() }
-            .map { Msg(it.role, it.text, it.atts) }
+            .map { Msg(it.role, if (it.role == "assistant") stripThinking(it.text) else it.text, it.atts) }
+            .filter { it.text.isNotEmpty() || it.atts.isNotEmpty() }
+        var history: List<Msg> = full
+        var sumBlock = ""
+        if (chat.summary.isNotBlank() && chat.sumCount in 1 until full.size) {
+            val keptAtts = full.subList(0, chat.sumCount).flatMap { it.atts }
+            val rest = full.drop(chat.sumCount)
+            history = if (keptAtts.isNotEmpty()) {
+                listOf(Msg("user", "(Вложения из начала разговора)", keptAtts.toMutableList())) + rest
+            } else rest
+            sumBlock = "\n\nКраткое содержание начала этого разговора (старые сообщения убраны ради экономии контекста):\n" + chat.summary
+        }
         val msg = Msg("assistant", "")
         chat.msgs.add(msg)
         Store.save(this, chat)
@@ -1236,15 +1247,21 @@ class MainActivity : Activity() {
         val memText = Store.mem(this).trim()
         val profBlock = (if (prof.isEmpty()) "" else "\n\nЧто нужно знать о собеседнике (учитывай это, не пересказывай без необходимости):\n" + prof) +
             (if (memText.isEmpty()) "" else "\n\nПамять о собеседнике (заметки из прошлых разговоров; используй к месту, не упоминай без необходимости):\n" + memText)
+        // Служебная добавка про сборку проектов нужна только в разговорах про проекты и файлы.
+        val lastUserText = full.lastOrNull { it.role == "user" }?.text ?: ""
+        val devMode = Builder.findBaseZipFile(Store.attDir(this), chat) != null ||
+            devRe.containsMatchIn(lastUserText) || devRe.containsMatchIn(chat.title)
+        val devBlock = if (devMode) "\n\n" + Builder.DEV_SYSTEM_ADDON.trim() else ""
         val fullSys = if (userSys.isBlank()) {
-            dateLine + profBlock + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+            dateLine + profBlock + sumBlock + devBlock
         } else {
-            dateLine + "\n\n" + userSys + profBlock + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+            dateLine + "\n\n" + userSys + profBlock + sumBlock + devBlock
         }
         val temp = Store.temp(this).replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 1.0)
         val cfg = Cfg(
             Store.baseUrl(this), Store.apiKey(this), Store.model(this), Store.maxTokens(this),
-            fullSys, Store.bearer(this), Store.stream(this), temp, Store.web(this), Store.think(this)
+            fullSys, Store.bearer(this), Store.stream(this), temp, Store.web(this), Store.think(this),
+            Store.baseUrl(this).contains("api.anthropic.com")
         )
         val r = Req(cfg, Store.attDir(this))
         req = r
@@ -1315,6 +1332,7 @@ class MainActivity : Activity() {
                     val lastUser = chat.msgs[chat.msgs.size - 2]
                     if (lastUser.role == "user" && lastUser.text.length >= 15) updateMemory(cfg, lastUser.text, finalText)
                 }
+                if (e2 == null && finalText.isNotEmpty()) compressIfNeeded(cfg, chat.id)
                 note = n
                 if (r2 != null) Store.addTokens(this, r2.inTok, r2.outTok)
                 chat.updated = System.currentTimeMillis()
@@ -1465,6 +1483,66 @@ class MainActivity : Activity() {
                     val clean = t.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(40).joinToString("\n").take(3000)
                     val s = getSharedPreferences("cfg", MODE_PRIVATE)
                     s.edit().putString("mem", clean).apply()
+                }
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
+    // ---------- чистка размышлений и сжатие длинного контекста ----------
+
+    private val devRe = Regex("(?i)(zip|зип|архив|termux|термукс|git\\b|гит\\b|проект|сборк|собери|скрипт|репозитор|apk|gradle)")
+
+    /** Убирает из ответа блок «💭 Размышления», чтобы модель не читала собственные черновики как часть разговора. */
+    private fun stripThinking(t: String): String {
+        if (!t.startsWith("💭")) return t
+        val marker = "\n---\n"
+        val i = t.indexOf(marker)
+        return if (i >= 0) t.substring(i + marker.length).trimStart('\n') else t
+    }
+
+    /** Когда разговор разросся, старую часть сворачивает в краткое содержание (после ответа, в фоне). */
+    private fun compressIfNeeded(cfg: Cfg, id: String) {
+        val full = chat.msgs
+            .filter { it.text.isNotEmpty() || it.atts.isNotEmpty() }
+            .map { Msg(it.role, if (it.role == "assistant") stripThinking(it.text) else it.text, it.atts) }
+        val start = if (chat.sumCount in 0..full.size) chat.sumCount else 0
+        val unsummarized = full.drop(start)
+        val chars = unsummarized.sumOf { it.text.length }
+        if (chars < 30000 || unsummarized.size < 10) return
+        var keepFrom = full.size - 6
+        while (keepFrom < full.size && full[keepFrom].role != "user") keepFrom++
+        if (keepFrom <= start + 2 || keepFrom >= full.size) return
+        val toSum = full.subList(start, keepFrom).map { Msg(it.role, it.text, it.atts) }
+        val oldSummary = chat.summary
+        Thread {
+            try {
+                val sys = "Ты сжимаешь начало разговора в краткое содержание для самого себя, чтобы продолжить беседу без потери смысла. " +
+                    "Сохрани: о чём договорились, принятые решения, важные факты о человеке и задаче, имена файлов, функций и версий, " +
+                    "текущее состояние работы и нерешённые вопросы. Пиши плотно, по пунктам, не больше 900 слов, на языке разговора. " +
+                    "Выводи только содержание, без вступлений."
+                val c2 = Cfg(cfg.url, cfg.key, cfg.model, 2500, sys, cfg.bearer, false)
+                val sb0 = StringBuilder()
+                if (oldSummary.isNotBlank()) sb0.append("Прежнее краткое содержание:\n").append(oldSummary).append("\n\n")
+                sb0.append("Новая часть разговора:\n")
+                var budget = 24000
+                for (m in toSum) {
+                    if (budget <= 0) break
+                    val line = (if (m.role == "user") "Человек: " else "Ассистент: ") + m.text.take(3000) + "\n\n"
+                    sb0.append(line)
+                    budget -= line.length
+                }
+                val out = StringBuilder()
+                Req(c2).run(listOf(Msg("user", sb0.toString()))) { out.append(it) }
+                val s = out.toString().trim()
+                if (s.length > 80) {
+                    runOnUiThread {
+                        if (chat.id == id && !sending) {
+                            chat.summary = s.take(8000)
+                            chat.sumCount = keepFrom
+                            Store.save(this, chat)
+                        }
+                    }
                 }
             } catch (e: Exception) {
             }

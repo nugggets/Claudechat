@@ -27,7 +27,9 @@ class Chat(
     var title: String,
     val msgs: MutableList<Msg>,
     var updated: Long,
-    var sys: String = ""
+    var sys: String = "",
+    var summary: String = "",
+    var sumCount: Int = 0
 )
 
 /** Шифрование ключа через Android Keystore (AES-GCM). */
@@ -252,6 +254,8 @@ object Store {
         o.put("title", chat.title)
         o.put("updated", chat.updated)
         o.put("sys", chat.sys)
+        o.put("summary", chat.summary)
+        o.put("sumCount", chat.sumCount)
         val a = JSONArray()
         for (m in real) {
             val j = JSONObject()
@@ -301,7 +305,8 @@ object Store {
         }
         return Chat(
             o.optString("id"), o.optString("title", "Чат"), list,
-            o.optLong("updated", 0L), o.optString("sys", "")
+            o.optLong("updated", 0L), o.optString("sys", ""),
+            o.optString("summary", ""), o.optInt("sumCount", 0)
         )
     }
 
