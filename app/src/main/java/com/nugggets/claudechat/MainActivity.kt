@@ -1229,15 +1229,17 @@ class MainActivity : Activity() {
         val userSys = if (chat.sys.isNotBlank()) chat.sys else Store.system(this)
         val today = java.text.SimpleDateFormat("EEEE, d MMMM yyyy", java.util.Locale("ru")).format(java.util.Date())
         val dateLine = "Текущая дата: $today."
+        val prof = Store.profile(this).trim()
+        val profBlock = if (prof.isEmpty()) "" else "\n\nЧто нужно знать о собеседнике (учитывай это, не пересказывай без необходимости):\n" + prof
         val fullSys = if (userSys.isBlank()) {
-            dateLine + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+            dateLine + profBlock + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
         } else {
-            dateLine + "\n\n" + userSys + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+            dateLine + "\n\n" + userSys + profBlock + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
         }
         val temp = Store.temp(this).replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 1.0)
         val cfg = Cfg(
             Store.baseUrl(this), Store.apiKey(this), Store.model(this), Store.maxTokens(this),
-            fullSys, Store.bearer(this), Store.stream(this), temp, Store.web(this)
+            fullSys, Store.bearer(this), Store.stream(this), temp, Store.web(this), Store.think(this)
         )
         val r = Req(cfg, Store.attDir(this))
         req = r

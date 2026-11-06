@@ -36,6 +36,8 @@ class SettingsActivity : Activity() {
     private lateinit var cbStream: CheckBox
     private lateinit var cbDark: CheckBox
     private lateinit var cbWeb: CheckBox
+    private lateinit var cbThink: CheckBox
+    private lateinit var eProfile: EditText
     private lateinit var eTemp: EditText
     private lateinit var seek: SeekBar
     private lateinit var lblSize: TextView
@@ -185,6 +187,15 @@ class SettingsActivity : Activity() {
 
         cbWeb = check("Веб-поиск Claude (работает только с официальным API Anthropic)", Store.web(this))
         add(cbWeb, 4)
+        cbThink = check("Расширенное размышление (качество выше, ответ дольше; нужен лимит токенов больше 2048)", Store.think(this))
+        add(cbThink, 4)
+
+        small("О себе (память): что Claude должен знать о вас, например имя, чем занимаетесь, как любите, чтобы отвечали")
+        eProfile = field("Например: меня зовут Алекс, я программист, люблю краткие ответы", Store.profile(this))
+        eProfile.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        eProfile.minLines = 3
+        eProfile.gravity = Gravity.TOP
+        add(eProfile, 4)
 
         // --- Вид ---
         head("Вид")
@@ -333,6 +344,7 @@ class SettingsActivity : Activity() {
             rbB.isChecked, cbStream.isChecked, seek.progress + 10, cbDark.isChecked,
             eTemp.text.toString().trim(), cbWeb.isChecked
         )
+        Store.setProfileThink(this, eProfile.text.toString().trim(), cbThink.isChecked)
         Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
         finish()
     }

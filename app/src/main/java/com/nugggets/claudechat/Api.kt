@@ -23,7 +23,8 @@ class Cfg(
     val bearer: Boolean,
     val stream: Boolean,
     val temp: Double? = null,
-    val web: Boolean = false
+    val web: Boolean = false,
+    val think: Boolean = false
 )
 
 class Res {
@@ -129,7 +130,15 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         body.put("model", cfg.model)
         body.put("max_tokens", cfg.maxTokens)
         if (cfg.system.isNotBlank()) body.put("system", cfg.system)
-        if (cfg.temp != null) body.put("temperature", cfg.temp)
+        val thinkOn = cfg.think && cfg.maxTokens > 2048
+        if (thinkOn) {
+            val th = JSONObject()
+            th.put("type", "enabled")
+            th.put("budget_tokens", minOf(10000, cfg.maxTokens - 1024))
+            body.put("thinking", th)
+        } else if (cfg.temp != null) {
+            body.put("temperature", cfg.temp)
+        }
 
         val merged = mutableListOf<Pair<String, JSONArray>>()
         for (m in history) {
