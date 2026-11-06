@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/list_fragment">
+
+    <fragment android:id="@+id/list_fragment" android:name="com.nugggets.gorodwatcher.ui.ListFragment" />
+    <fragment android:id="@+id/filter_fragment" android:name="com.nugggets.gorodwatcher.ui.FilterFragment" />
+    <fragment android:id="@+id/sync_fragment" android:name="com.nugggets.gorodwatcher.ui.SyncFragment" />
+</navigation>
