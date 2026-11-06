@@ -1,0 +1,415 @@
+package com.nugggets.claudechat
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.media.ExifInterface
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
+import java.util.zip.ZipInputStream
+
+/** Приём файлов: превращает выбранный файл в вложение, которое можно отправить в API. */
+object Files {
+    const val MAX_PDF = 25L * 1024 * 1024
+    const val MAX_TEXT_CHARS = 180000
+    const val MAX_SIDE = 1568
+
+    fun nameOf(c: Context, uri: Uri): String {
+        var n = ""
+        try {
+            val cur = c.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            if (cur != null) {
+                try {
+                    if (cur.moveToFirst()) n = cur.getString(0) ?: ""
+                } finally {
+                    cur.close()
+                }
+            }
+        } catch (e: Exception) {
+        }
+        if (n.isBlank()) n = uri.lastPathSegment?.substringAfterLast('/') ?: "файл"
+        return n
+    }
+
+    /** Читает файл и сохраняет в папку вложений. Бросает Exception с понятным текстом. */
+    fun readAtt(c: Context, uri: Uri): Att {
+        val name = nameOf(c, uri)
+        val ext = name.substringAfterLast('.', "").lowercase()
+        var mime = c.contentResolver.getType(uri) ?: ""
+        if (mime.isBlank() || mime == "application/octet-stream") {
+            mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: mime
+        }
+        val id = System.nanoTime().toString()
+        Diag.log("Чтение вложения: name=$name, ext=$ext, mime=$mime")
+        val dir = Store.attDir(c)
+        return when {
+            mime.startsWith("image/") -> importImage(c, uri, name, id, dir)
+            mime == "application/pdf" || ext == "pdf" -> importPdf(c, uri, name, id, dir)
+            ext == "docx" || mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ->
+                importOffice(c, uri, name, id, dir, true)
+            ext == "pptx" || mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" ->
+                importOffice(c, uri, name, id, dir, false)
+            ext == "xlsx" || mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ->
+                importXlsx(c, uri, name, id, dir)
+            ext in setOf("zip", "jar", "apk", "aab") || mime == "application/zip" || mime == "application/x-zip-compressed" ->
+                importZip(c, uri, name, id, dir)
+            else -> importText(c, uri, name, id, dir)
+        }
+    }
+
+    private fun open(c: Context, uri: Uri, name: String): InputStream {
+        return c.contentResolver.openInputStream(uri) ?: throw Exception("Не удалось открыть файл: $name")
+    }
+
+    // ---------- изображения ----------
+
+    private fun exifMatrix(c: Context, uri: Uri): Matrix? {
+        var o = ExifInterface.ORIENTATION_NORMAL
+        try {
+            val s = c.contentResolver.openInputStream(uri)
+            if (s != null) {
+                try {
+                    o = ExifInterface(s).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
+                    )
+                } finally {
+                    s.close()
+                }
+            }
+        } catch (e: Exception) {
+        }
+        val m = Matrix()
+        when (o) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                m.postRotate(90f)
+                m.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                m.postRotate(270f)
+                m.postScale(-1f, 1f)
+            }
+            else -> return null
+        }
+        return m
+    }
+
+    private fun importImage(c: Context, uri: Uri, name: String, id: String, dir: File): Att {
+        val bounds = BitmapFactory.Options()
+        bounds.inJustDecodeBounds = true
+        open(c, uri, name).use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw Exception("Не удалось прочитать изображение: $name")
+        }
+        var sample = 1
+        while (bounds.outWidth / sample > MAX_SIDE * 2 || bounds.outHeight / sample > MAX_SIDE * 2) sample *= 2
+        val opts = BitmapFactory.Options()
+        opts.inSampleSize = sample
+        var bmp: Bitmap = open(c, uri, name).use { BitmapFactory.decodeStream(it, null, opts) }
+            ?: throw Exception("Не удалось прочитать изображение: $name")
+
+        val mx = exifMatrix(c, uri)
+        if (mx != null) {
+            val r = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, mx, true)
+            if (r !== bmp) bmp.recycle()
+            bmp = r
+        }
+        val big = maxOf(bmp.width, bmp.height)
+        if (big > MAX_SIDE) {
+            val k = MAX_SIDE.toFloat() / big
+            val r = Bitmap.createScaledBitmap(
+                bmp, maxOf(1, (bmp.width * k).toInt()), maxOf(1, (bmp.height * k).toInt()), true
+            )
+            if (r !== bmp) bmp.recycle()
+            bmp = r
+        }
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val cv = Canvas(out)
+        cv.drawColor(Color.WHITE)
+        cv.drawBitmap(bmp, 0f, 0f, null)
+        bmp.recycle()
+
+        val f = File(dir, "$id.jpg")
+        try {
+            f.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        } finally {
+            out.recycle()
+        }
+        return Att(name, "image/jpeg", f.name)
+    }
+
+    // ---------- PDF ----------
+
+    private fun importPdf(c: Context, uri: Uri, name: String, id: String, dir: File): Att {
+        val f = File(dir, "$id.pdf")
+        try {
+            var total = 0L
+            open(c, uri, name).use { ins ->
+                f.outputStream().use { o ->
+                    val buf = ByteArray(16384)
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > MAX_PDF) throw Exception("PDF больше 25 МБ: $name")
+                        o.write(buf, 0, n)
+                    }
+                }
+            }
+            if (total == 0L) throw Exception("Файл пустой: $name")
+        } catch (e: Exception) {
+            f.delete()
+            throw e
+        }
+        return Att(name, "application/pdf", f.name)
+    }
+
+    // ---------- текст ----------
+
+    private fun readUpTo(s: InputStream, max: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(16384)
+        var total = 0
+        while (total < max) {
+            val n = s.read(buf, 0, minOf(buf.size, max - total))
+            if (n < 0) break
+            out.write(buf, 0, n)
+            total += n
+        }
+        return out.toByteArray()
+    }
+
+    private fun saveText(dir: File, id: String, name: String, text: String): Att {
+        var t = text
+        if (t.length > MAX_TEXT_CHARS) {
+            t = t.substring(0, MAX_TEXT_CHARS) + "\n\n[…файл обрезан: показаны первые " + MAX_TEXT_CHARS + " символов]"
+        }
+        if (t.isBlank()) throw Exception("В файле нет текста: $name")
+        val f = File(dir, "$id.txt")
+        f.writeText(t, Charsets.UTF_8)
+        return Att(name, "text/plain", f.name)
+    }
+
+    private fun importText(c: Context, uri: Uri, name: String, id: String, dir: File): Att {
+        val bytes = open(c, uri, name).use { readUpTo(it, 4 * 1024 * 1024) }
+        val head = minOf(bytes.size, 8000)
+        for (i in 0 until head) {
+            if (bytes[i].toInt() == 0) {
+                // Если это бинарник или неизвестный архив, попробуем прочитать как zip
+                return try {
+                    importZip(c, uri, name, id, dir)
+                } catch (e: Exception) {
+                    saveText(dir, id, name, "Бинарный файл: $name (${bytes.size} байт)")
+                }
+            }
+        }
+        return saveText(dir, id, name, String(bytes, Charsets.UTF_8))
+    }
+
+    // ---------- zip ----------
+
+    private fun importZip(c: Context, uri: Uri, name: String, id: String, dir: File): Att {
+        // Сохраняем копию исходного архива, чтобы сборщик мог переиспользовать бинарные файлы (.jks, иконки и т.д.)
+        val origZip = File(dir, "$id.txt.orig.zip")
+        try {
+            open(c, uri, name).use { ins ->
+                origZip.outputStream().use { outs -> ins.copyTo(outs) }
+            }
+        } catch (e: Exception) {
+            origZip.delete()
+        }
+
+        val skipDirs = listOf(".git/", "build/", ".gradle/", "node_modules/", "__pycache__/", ".idea/", ".DS_Store")
+        val binExts = setOf(
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "mp3", "mp4", "wav", "ogg",
+            "apk", "aab", "dex", "so", "jar", "keystore", "jks", "class", "pdf", "woff", "woff2", "ttf", "otf"
+        )
+        val index = StringBuilder()
+        val body = StringBuilder()
+        var skipped = 0
+        var totalEntries = 0
+        open(c, uri, name).use { raw ->
+            val z = ZipInputStream(raw)
+            while (true) {
+                val e = try {
+                    z.nextEntry
+                } catch (ex: Exception) {
+                    break
+                } ?: break
+                if (e.isDirectory) continue
+                val en = e.name
+                if (skipDirs.any { en.contains(it) }) {
+                    skipped++
+                    continue
+                }
+                totalEntries++
+                val ext = en.substringAfterLast('.', "").lowercase()
+                if (ext in binExts) {
+                    index.append(en).append("  [бинарный файл сохраняется в проекте]\n")
+                    continue
+                }
+                val bytes = readUpTo(z, 1024 * 1024)
+                var binary = false
+                for (k in 0 until minOf(bytes.size, 8000)) {
+                    if (bytes[k].toInt() == 0) {
+                        binary = true
+                        break
+                    }
+                }
+                if (binary) {
+                    index.append(en).append("  [бинарный файл сохраняется в проекте]\n")
+                    continue
+                }
+                val txt = String(bytes, Charsets.UTF_8)
+                if (body.length + txt.length > MAX_TEXT_CHARS) {
+                    index.append(en).append("  (не включён: лимит размера)\n")
+                    continue
+                }
+                index.append(en).append("\n")
+                body.append("===== ").append(en).append(" =====\n").append(txt).append("\n\n")
+            }
+        }
+        if (totalEntries == 0 && skipped == 0) {
+            origZip.delete()
+            throw Exception("Архив пуст или повреждён: $name")
+        }
+        val sb = StringBuilder()
+        sb.append("Архив проекта: ").append(name).append("\n")
+        sb.append("(Все бинарные файлы проекта, включая .jks и изображения, сохранены локально. ")
+        sb.append("Чтобы обновить проект и отдать пользователю новый ZIP, выведи только изменённые/новые файлы в формате ===== путь/к/файлу =====)\n\n")
+        sb.append("Список файлов:\n").append(index)
+        if (skipped > 0) sb.append("Пропущено служебных файлов (.git, build и т.п.): ").append(skipped).append("\n")
+        if (body.isNotEmpty()) {
+            sb.append("\n").append(body)
+        } else {
+            sb.append("\n(В архиве нет текстовых файлов, показана только структура архива)\n")
+        }
+        return saveText(dir, id, name, sb.toString())
+    }
+
+    // ---------- docx / pptx / xlsx ----------
+
+    private fun xmlText(xml: String, paraEnd: String, tabTag: String, brTag: String): String {
+        var x = xml.replace(paraEnd, "\n").replace(tabTag, "\t").replace(brTag, "\n")
+        x = x.replace(Regex("<[^>]+>"), "")
+        x = x.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+            .replace("&apos;", "'").replace("&amp;", "&")
+        return x.replace(Regex("\n{3,}"), "\n\n").trim()
+    }
+
+    private fun importOffice(c: Context, uri: Uri, name: String, id: String, dir: File, docx: Boolean): Att {
+        val parts = java.util.TreeMap<Int, String>()
+        val slideRe = Regex("ppt/slides/slide(\\d+)\\.xml")
+        open(c, uri, name).use { raw ->
+            val z = ZipInputStream(raw)
+            while (true) {
+                val e = z.nextEntry ?: break
+                val en = e.name
+                if (docx && en == "word/document.xml") {
+                    parts[0] = String(readUpTo(z, 20 * 1024 * 1024), Charsets.UTF_8)
+                } else if (!docx) {
+                    val m = slideRe.matchEntire(en)
+                    if (m != null) {
+                        parts[m.groupValues[1].toInt()] = String(readUpTo(z, 5 * 1024 * 1024), Charsets.UTF_8)
+                    }
+                }
+            }
+        }
+        if (parts.isEmpty()) throw Exception("Не удалось прочитать файл: $name")
+        val sb = StringBuilder()
+        for ((k, v) in parts) {
+            if (docx) {
+                sb.append(xmlText(v, "</w:p>", "<w:tab/>", "<w:br/>"))
+            } else {
+                sb.append("## Слайд ").append(k).append("\n")
+                sb.append(xmlText(v, "</a:p>", "<a:tab/>", "<a:br/>")).append("\n\n")
+            }
+        }
+        return saveText(dir, id, name, sb.toString())
+    }
+
+    private fun importXlsx(c: Context, uri: Uri, name: String, id: String, dir: File): Att {
+        val strings = mutableListOf<String>()
+        val sheets = java.util.TreeMap<String, String>()
+        open(c, uri, name).use { raw ->
+            val z = ZipInputStream(raw)
+            while (true) {
+                val e = z.nextEntry ?: break
+                val en = e.name
+                if (en == "xl/sharedStrings.xml") {
+                    val xml = String(readUpTo(z, 10 * 1024 * 1024), Charsets.UTF_8)
+                    for (m in Regex("<si>(.*?)</si>", RegexOption.DOT_MATCHES_ALL).findAll(xml)) {
+                        strings.add(xmlText(m.groupValues[1], "</t>", "", ""))
+                    }
+                } else if (en.startsWith("xl/worksheets/sheet") && en.endsWith(".xml")) {
+                    sheets[en.substringAfterLast('/')] = String(readUpTo(z, 10 * 1024 * 1024), Charsets.UTF_8)
+                }
+            }
+        }
+        val sb = StringBuilder("Таблица Excel: $name\n\n")
+        for ((sName, xml) in sheets) {
+            sb.append("=== ").append(sName).append(" ===\n")
+            for (rowMatch in Regex("<row[^>]*>(.*?)</row>", RegexOption.DOT_MATCHES_ALL).findAll(xml)) {
+                val rowVals = mutableListOf<String>()
+                for (cMatch in Regex("<c([^>]*)>(.*?)</c>", RegexOption.DOT_MATCHES_ALL).findAll(rowMatch.groupValues[1])) {
+                    val attrs = cMatch.groupValues[1]
+                    val inner = cMatch.groupValues[2]
+                    val v = Regex("<v>(.*?)</v>").find(inner)?.groupValues?.get(1) ?: ""
+                    if (attrs.contains("t=\"s\"")) {
+                        val idx = v.toIntOrNull()
+                        rowVals.add(if (idx != null && idx in strings.indices) strings[idx] else v)
+                    } else {
+                        rowVals.add(v.ifEmpty { xmlText(inner, "", "", "") })
+                    }
+                }
+                if (rowVals.any { it.isNotEmpty() }) sb.append(rowVals.joinToString("\t")).append("\n")
+            }
+            sb.append("\n")
+        }
+        return saveText(dir, id, name, sb.toString())
+    }
+
+    // ---------- обслуживание ----------
+
+    fun drop(c: Context, a: Att) {
+        try {
+            File(Store.attDir(c), a.file).delete()
+            File(Store.attDir(c), a.file + ".orig.zip").delete()
+        } catch (e: Exception) {
+        }
+    }
+
+    fun dropAll(c: Context, list: List<Att>) {
+        for (a in list) drop(c, a)
+    }
+
+    fun safeName(title: String): String {
+        val s = title.replace(Regex("[^\\p{L}\\p{N} _-]"), "").trim().take(40)
+        return if (s.isEmpty()) "chat" else s
+    }
+
+    fun chatText(chat: Chat): String {
+        val sb = StringBuilder()
+        sb.append("# ").append(chat.title).append("\n\n")
+        for (m in chat.msgs) {
+            if (m.text.isEmpty() && m.atts.isEmpty()) continue
+            sb.append(if (m.role == "user") "## Вы\n\n" else "## Claude\n\n")
+            if (m.atts.isNotEmpty()) {
+                sb.append("Вложения: ").append(m.atts.joinToString(", ") { it.name }).append("\n\n")
+            }
+            if (m.text.isNotEmpty()) sb.append(m.text).append("\n\n")
+        }
+        return sb.toString().trimEnd() + "\n"
+    }
+}
