@@ -4,18 +4,42 @@ plugins {
 }
 
 android {
-    namespace = "com.nugggets.gorodwatcher"
+    namespace = "com.nugggets.claudechat"
     compileSdk = 34
+
     defaultConfig {
-        applicationId = "com.nugggets.gorodwatcher"
-        minSdk = 29
+        applicationId = "com.nugggets.claudechat"
+        minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3"
+        versionCode = 20
+        versionName = "2.9"
     }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("claudechat.jks")
+            storePassword = "claudechat"
+            keyAlias = "claudechat"
+            keyPassword = "claudechat"
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
 }
