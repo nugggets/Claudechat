@@ -206,6 +206,24 @@ class SettingsActivity : Activity() {
         cbDark = check("Тёмная тема", Store.dark(this))
         add(cbDark, 8)
 
+        val lblPad = label("", 14f, Pal.sub, false)
+        add(lblPad, 8)
+        val padSeek = SeekBar(this)
+        padSeek.max = 240
+        padSeek.progress = Store.topPad(this)
+        lblPad.text = "Отступ сверху (если не работает верх экрана): " + Store.topPad(this) + " dp"
+        padSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                lblPad.text = "Отступ сверху (если не работает верх экрана): " + p + " dp"
+            }
+
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {
+                Store.setTopPad(this@SettingsActivity, s?.progress ?: 0)
+            }
+        })
+        add(padSeek, 4)
+
         // --- Действия ---
         add(button("Загрузить список моделей с сервера", false) { loadModels() }, 28)
         add(button("Проверить ключ", false) { test() }, 12)

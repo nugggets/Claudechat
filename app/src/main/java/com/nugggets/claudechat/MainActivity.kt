@@ -182,7 +182,7 @@ class MainActivity : Activity() {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Pal.bar)
-        bar.setPadding(dp(4), dp(4), dp(4), dp(0))
+        bar.setPadding(dp(4), dp(4) + dp(Store.topPad(this)), dp(4), dp(0))
         bar.addView(barBtn("☰") { openHistory() })
         titleView = label("", 17f, Pal.text, true)
         titleView.maxLines = 1

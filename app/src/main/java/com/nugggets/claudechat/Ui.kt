@@ -67,7 +67,7 @@ fun Activity.topBar(titleText: String, left: String, onLeft: () -> Unit): Linear
     bar.orientation = LinearLayout.HORIZONTAL
     bar.gravity = Gravity.CENTER_VERTICAL
     bar.setBackgroundColor(Pal.bar)
-    bar.setPadding(dp(4), dp(4), dp(4), dp(4))
+    bar.setPadding(dp(4), dp(4) + dp(Store.topPad(this)), dp(4), dp(4))
     val b = label(left, 22f, Pal.text, true)
     b.gravity = Gravity.CENTER
     b.setPadding(dp(14), dp(8), dp(14), dp(8))

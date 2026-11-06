@@ -119,6 +119,12 @@ object Store {
     fun temp(c: Context): String = p(c).getString("temp", "") ?: ""
     fun web(c: Context): Boolean = p(c).getBoolean("web", false)
 
+    /** Отступ сверху (dp): «заглушка» для экрана, у которого не работает верхняя часть сенсора. */
+    fun topPad(c: Context): Int = p(c).getInt("toppad", 72)
+    fun setTopPad(c: Context, v: Int) {
+        p(c).edit().putInt("toppad", v.coerceIn(0, 240)).apply()
+    }
+
     /** Модели, полученные с сервера; пока не загружены — встроенный набор. */
     fun modelIds(c: Context): List<String> {
         val raw = p(c).getString("mlist", "") ?: ""
