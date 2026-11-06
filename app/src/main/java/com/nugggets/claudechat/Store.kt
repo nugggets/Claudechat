@@ -107,8 +107,11 @@ object Store {
     fun apiKey(c: Context): String = Crypto.dec(p(c).getString("key", "") ?: "")
     fun model(c: Context): String = p(c).getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
     fun maxTokens(c: Context): Int = p(c).getInt("max", 16384)
-    fun system(c: Context): String =
-        if (p(c).contains("system")) (p(c).getString("system", "") ?: "") else DEFAULT_SYSTEM
+    fun system(c: Context): String {
+        val v = p(c).getString("system", "") ?: ""
+        // Старые установки хранят пустую строку, хотя инструкцию никто не стирал: даём им стандартную.
+        return if (p(c).getInt("sysv", 0) >= 2 || v.isNotBlank()) v else DEFAULT_SYSTEM
+    }
     fun bearer(c: Context): Boolean = p(c).getBoolean("bearer", false)
     fun stream(c: Context): Boolean = p(c).getBoolean("stream", true)
     fun textSize(c: Context): Int = p(c).getInt("size", 16)
@@ -152,6 +155,7 @@ object Store {
             .putString("model", model)
             .putInt("max", max)
             .putString("system", system)
+            .putInt("sysv", 2)
             .putBoolean("bearer", bearer)
             .putBoolean("stream", stream)
             .putInt("size", size)

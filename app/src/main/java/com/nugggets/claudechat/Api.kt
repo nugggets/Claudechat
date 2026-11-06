@@ -34,6 +34,10 @@ class Res {
 
 /** Один запрос к /v1/messages. Работает в фоновом потоке. */
 class Req(private val cfg: Cfg, private val attDir: File? = null) {
+    /** После пустого потокового ответа повторяем запрос без стриминга: так видна настоящая ошибка прокси. */
+    private var noStream = false
+    private val streamOn: Boolean get() = cfg.stream && !noStream
+
     @Volatile
     var cancelled = false
 
@@ -158,7 +162,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             arr.put(j)
         }
         body.put("messages", arr)
-        if (cfg.stream) body.put("stream", true)
+        if (streamOn) body.put("stream", true)
         if (cfg.web) {
             val t = JSONObject()
             t.put("type", "web_search_20250305")
@@ -168,7 +172,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         }
         val rawBytes = body.toString().toByteArray(Charsets.UTF_8)
         Diag.lastReqBytes = rawBytes.size
-        Diag.lastReqPreview = "model=${cfg.model}, max_tokens=${cfg.maxTokens}, stream=${cfg.stream}, web=${cfg.web}, msgs=[${structSummary.toString().trimEnd()}]"
+        Diag.lastReqPreview = "model=${cfg.model}, max_tokens=${cfg.maxTokens}, stream=${streamOn}, web=${cfg.web}, msgs=[${structSummary.toString().trimEnd()}]"
         return rawBytes
     }
 
@@ -180,8 +184,8 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
     ): Res {
         onStatus("Подготовка запроса и вложений…")
         Diag.log("Начало сборки запроса: историй=${history.size}, модель=${cfg.model}")
-        val bytes = buildBody(history)
-        val kb = bytes.size / 1024
+        var bytes = buildBody(history)
+        var kb = bytes.size / 1024
         var attempt = 0
         while (true) {
             try {
@@ -191,6 +195,12 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 val retry = c == 1000 || c == 429 || c == 500 || c == 502 || c == 503 || c == 504 || c == 529
                 if (!retry || attempt >= 2 || cancelled) throw e
                 attempt++
+                if (c == 1000 && cfg.stream && !noStream) {
+                    noStream = true
+                    bytes = buildBody(history)
+                    kb = bytes.size / 1024
+                    Diag.log("Пустой потоковый ответ: повторяем без стриминга")
+                }
                 Diag.log("Код ответа $c, автоповтор $attempt/2")
                 onStatus(if (c == 1000) "Пустой ответ, повтор $attempt/2…" else "Сервер перегружен (код $c), повтор $attempt/2…")
                 var waited = 0
@@ -217,7 +227,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         Diag.lastContentType = ""
         Diag.lastRespPreview = ""
         Diag.lastSseEventsCount = 0
-        Diag.log("POST $urlStr (${bytes.size} байт, stream=${cfg.stream})")
+        Diag.log("POST $urlStr (${bytes.size} байт, stream=${streamOn})")
 
         val c = try {
             URL(urlStr).openConnection() as HttpURLConnection
@@ -230,7 +240,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             onStatus("Подключение к серверу ($kb КБ)…")
             c.requestMethod = "POST"
             c.connectTimeout = 30000
-            c.readTimeout = if (cfg.stream) 180000 else 300000
+            c.readTimeout = if (streamOn) 180000 else 300000
             c.doOutput = true
             c.setFixedLengthStreamingMode(bytes.size)
             c.setRequestProperty("content-type", "application/json")
@@ -240,7 +250,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             } else {
                 c.setRequestProperty("x-api-key", cfg.key)
             }
-            c.setRequestProperty("accept", if (cfg.stream) "text/event-stream" else "application/json")
+            c.setRequestProperty("accept", if (streamOn) "text/event-stream" else "application/json")
             c.outputStream.use { it.write(bytes) }
 
             onStatus("Ожидание ответа от ${cfg.model}…")
@@ -258,7 +268,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 Diag.log("Ошибка HTTP $code: ${raw.replace("\n", " ").take(300)}")
                 throw ApiError(msg, code)
             }
-            if (cfg.stream && ct.contains("event-stream")) {
+            if (streamOn && ct.contains("event-stream")) {
                 readSse(c, res, onStatus, onDelta)
             } else {
                 onStatus("Чтение полного ответа…")
