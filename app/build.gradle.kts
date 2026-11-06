@@ -11,8 +11,8 @@ android {
         applicationId = "com.nugggets.claudechat"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "2.7"
+        versionCode = 8
+        versionName = "1.7"
     }
 
     signingConfigs {

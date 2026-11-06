@@ -21,8 +21,6 @@ import java.util.Locale
 private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
 private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 private const val RQ_EXPORT = 21
-private const val RQ_BACKUP = 22
-private const val RQ_RESTORE = 23
 
 class HistoryActivity : Activity() {
     private lateinit var list: LinearLayout
@@ -85,20 +83,6 @@ class HistoryActivity : Activity() {
         foot.addView(b2, LinearLayout.LayoutParams(WRAP, WRAP))
         root.addView(foot, LinearLayout.LayoutParams(MATCH, WRAP))
 
-        val foot2 = LinearLayout(this)
-        foot2.orientation = LinearLayout.HORIZONTAL
-        foot2.setBackgroundColor(Pal.bar)
-        foot2.gravity = Gravity.CENTER
-        val b3 = label("Копия для восстановления", 13f, Pal.text, false)
-        b3.setPadding(dp(14), dp(12), dp(14), dp(12))
-        b3.setOnClickListener { backupJson() }
-        val b4 = label("Восстановить из копии", 13f, Pal.text, false)
-        b4.setPadding(dp(14), dp(12), dp(14), dp(12))
-        b4.setOnClickListener { restoreJson() }
-        foot2.addView(b3, LinearLayout.LayoutParams(0, WRAP, 1f))
-        foot2.addView(b4, LinearLayout.LayoutParams(0, WRAP, 1f))
-        root.addView(foot2, LinearLayout.LayoutParams(MATCH, WRAP))
-
         setContentView(root)
         fill()
     }
@@ -123,11 +107,6 @@ class HistoryActivity : Activity() {
             val t = label("Ничего не найдено.", 15f, Pal.sub, false)
             t.setPadding(dp(8), dp(24), dp(8), dp(8))
             list.addView(t)
-        }
-        if (Store.unreadable > 0) {
-            val w = label("Не удалось прочитать чатов: " + Store.unreadable + ". Файлы на месте, но повреждены.", 13f, Pal.err, false)
-            w.setPadding(dp(8), dp(8), dp(8), dp(4))
-            list.addView(w, 0)
         }
         val fmt = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
         for (c in chats) {
@@ -193,50 +172,8 @@ class HistoryActivity : Activity() {
         }
     }
 
-    private fun backupJson() {
-        val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
-        i.addCategory(Intent.CATEGORY_OPENABLE)
-        i.type = "application/json"
-        i.putExtra(Intent.EXTRA_TITLE, "claudechat-backup.json")
-        try {
-            startActivityForResult(i, RQ_BACKUP)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Не найдено приложение для сохранения файлов", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun restoreJson() {
-        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
-        i.addCategory(Intent.CATEGORY_OPENABLE)
-        i.type = "*/*"
-        try {
-            startActivityForResult(i, RQ_RESTORE)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Не найдено приложение для выбора файлов", Toast.LENGTH_LONG).show()
-        }
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == RQ_BACKUP || requestCode == RQ_RESTORE) {
-            val u = data?.data
-            if (resultCode != RESULT_OK || u == null) return
-            try {
-                if (requestCode == RQ_BACKUP) {
-                    val o = contentResolver.openOutputStream(u)
-                    o?.use { it.write(Store.exportJson(this).toByteArray(Charsets.UTF_8)) }
-                    Toast.makeText(this, "Копия сохранена", Toast.LENGTH_SHORT).show()
-                } else {
-                    val t = contentResolver.openInputStream(u)?.use { String(it.readBytes(), Charsets.UTF_8) } ?: ""
-                    val n = Store.importJson(this, t)
-                    Toast.makeText(this, "Восстановлено чатов: $n", Toast.LENGTH_LONG).show()
-                    fill()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Не удалось обработать файл", Toast.LENGTH_LONG).show()
-            }
-            return
-        }
         if (requestCode == RQ_EXPORT) {
             val u = data?.data
             if (resultCode == RESULT_OK && u != null) {

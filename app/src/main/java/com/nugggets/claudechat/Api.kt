@@ -23,8 +23,7 @@ class Cfg(
     val bearer: Boolean,
     val stream: Boolean,
     val temp: Double? = null,
-    val web: Boolean = false,
-    val think: Boolean = false
+    val web: Boolean = false
 )
 
 class Res {
@@ -35,10 +34,6 @@ class Res {
 
 /** Один запрос к /v1/messages. Работает в фоновом потоке. */
 class Req(private val cfg: Cfg, private val attDir: File? = null) {
-    /** После пустого потокового ответа повторяем запрос без стриминга: так видна настоящая ошибка прокси. */
-    private var noStream = false
-    private val streamOn: Boolean get() = cfg.stream && !noStream
-
     @Volatile
     var cancelled = false
 
@@ -130,15 +125,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         body.put("model", cfg.model)
         body.put("max_tokens", cfg.maxTokens)
         if (cfg.system.isNotBlank()) body.put("system", cfg.system)
-        val thinkOn = cfg.think && cfg.maxTokens > 2048
-        if (thinkOn) {
-            val th = JSONObject()
-            th.put("type", "enabled")
-            th.put("budget_tokens", minOf(10000, cfg.maxTokens - 1024))
-            body.put("thinking", th)
-        } else if (cfg.temp != null) {
-            body.put("temperature", cfg.temp)
-        }
+        if (cfg.temp != null) body.put("temperature", cfg.temp)
 
         val merged = mutableListOf<Pair<String, JSONArray>>()
         for (m in history) {
@@ -171,7 +158,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             arr.put(j)
         }
         body.put("messages", arr)
-        if (streamOn) body.put("stream", true)
+        if (cfg.stream) body.put("stream", true)
         if (cfg.web) {
             val t = JSONObject()
             t.put("type", "web_search_20250305")
@@ -181,7 +168,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         }
         val rawBytes = body.toString().toByteArray(Charsets.UTF_8)
         Diag.lastReqBytes = rawBytes.size
-        Diag.lastReqPreview = "model=${cfg.model}, max_tokens=${cfg.maxTokens}, stream=${streamOn}, web=${cfg.web}, msgs=[${structSummary.toString().trimEnd()}]"
+        Diag.lastReqPreview = "model=${cfg.model}, max_tokens=${cfg.maxTokens}, stream=${cfg.stream}, web=${cfg.web}, msgs=[${structSummary.toString().trimEnd()}]"
         return rawBytes
     }
 
@@ -193,25 +180,19 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
     ): Res {
         onStatus("Подготовка запроса и вложений…")
         Diag.log("Начало сборки запроса: историй=${history.size}, модель=${cfg.model}")
-        var bytes = buildBody(history)
-        var kb = bytes.size / 1024
+        val bytes = buildBody(history)
+        val kb = bytes.size / 1024
         var attempt = 0
         while (true) {
             try {
                 return once(bytes, kb, onStatus, onDelta)
             } catch (e: ApiError) {
                 val c = e.code
-                val retry = c == 1000 || c == 429 || c == 500 || c == 502 || c == 503 || c == 504 || c == 529
+                val retry = c == 429 || c == 500 || c == 502 || c == 503 || c == 504 || c == 529
                 if (!retry || attempt >= 2 || cancelled) throw e
                 attempt++
-                if (c == 1000 && cfg.stream && !noStream) {
-                    noStream = true
-                    bytes = buildBody(history)
-                    kb = bytes.size / 1024
-                    Diag.log("Пустой потоковый ответ: повторяем без стриминга")
-                }
                 Diag.log("Код ответа $c, автоповтор $attempt/2")
-                onStatus(if (c == 1000) "Пустой ответ, повтор $attempt/2…" else "Сервер перегружен (код $c), повтор $attempt/2…")
+                onStatus("Сервер перегружен (код $c), повтор $attempt/2…")
                 var waited = 0
                 while (waited < 2500 * attempt && !cancelled) {
                     Thread.sleep(100)
@@ -236,7 +217,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
         Diag.lastContentType = ""
         Diag.lastRespPreview = ""
         Diag.lastSseEventsCount = 0
-        Diag.log("POST $urlStr (${bytes.size} байт, stream=${streamOn})")
+        Diag.log("POST $urlStr (${bytes.size} байт, stream=${cfg.stream})")
 
         val c = try {
             URL(urlStr).openConnection() as HttpURLConnection
@@ -249,7 +230,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             onStatus("Подключение к серверу ($kb КБ)…")
             c.requestMethod = "POST"
             c.connectTimeout = 30000
-            c.readTimeout = if (streamOn) 180000 else 300000
+            c.readTimeout = if (cfg.stream) 180000 else 300000
             c.doOutput = true
             c.setFixedLengthStreamingMode(bytes.size)
             c.setRequestProperty("content-type", "application/json")
@@ -259,7 +240,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             } else {
                 c.setRequestProperty("x-api-key", cfg.key)
             }
-            c.setRequestProperty("accept", if (streamOn) "text/event-stream" else "application/json")
+            c.setRequestProperty("accept", if (cfg.stream) "text/event-stream" else "application/json")
             c.outputStream.use { it.write(bytes) }
 
             onStatus("Ожидание ответа от ${cfg.model}…")
@@ -277,7 +258,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 Diag.log("Ошибка HTTP $code: ${raw.replace("\n", " ").take(300)}")
                 throw ApiError(msg, code)
             }
-            if (streamOn && ct.contains("event-stream")) {
+            if (cfg.stream && ct.contains("event-stream")) {
                 readSse(c, res, onStatus, onDelta)
             } else {
                 onStatus("Чтение полного ответа…")
@@ -328,8 +309,7 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 val trimmed = line.trim()
                 if (trimmed.isEmpty() || trimmed.startsWith(":")) continue
                 if (!trimmed.startsWith("data:")) {
-                    val isSseMeta = trimmed.startsWith("event:") || trimmed.startsWith("id:") || trimmed.startsWith("retry:")
-                    if (!isSseMeta && emitted == 0 && nonSseLines.length < 32000) {
+                    if (emitted == 0 && nonSseLines.length < 32000) {
                         nonSseLines.append(line).append("\n")
                     }
                     continue
@@ -467,10 +447,8 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             if (emitted == 0 && nonSseLines.isNotEmpty()) {
                 Diag.log("SSE поток не содержал data:, пробуем разобрать как полный JSON (${nonSseLines.length} симв.)")
                 parseFull(nonSseLines.toString(), res, onStatus, onDelta)
-            } else if (emitted == 0 && !cancelled) {
+            } else if (emitted == 0) {
                 Diag.log("ВНИМАНИЕ: SSE поток завершился, но ни одного символа текста не получено (событий: ${Diag.lastSseEventsCount})")
-                val why = if (res.stop.isNotEmpty()) " (причина остановки: ${res.stop})" else ""
-                throw ApiError("Модель вернула пустой ответ$why. Нажмите «Получить ответ» ещё раз; если повторяется, смените модель или очистите системную инструкцию в настройках.", 1000)
             }
         } finally {
             try {

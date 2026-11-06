@@ -182,7 +182,7 @@ class MainActivity : Activity() {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Pal.bar)
-        bar.setPadding(dp(4), dp(4) + dp(Store.topPad(this)), dp(4), dp(0))
+        bar.setPadding(dp(4), dp(4), dp(4), dp(0))
         bar.addView(barBtn("☰") { openHistory() })
         titleView = label("", 17f, Pal.text, true)
         titleView.maxLines = 1
@@ -340,7 +340,7 @@ class MainActivity : Activity() {
             val card = LinearLayout(this)
             card.orientation = LinearLayout.VERTICAL
             card.setPadding(dp(14), dp(12), dp(14), dp(12))
-            card.background = rounded(Pal.field, dp(12).toFloat())
+            card.background = rounded(Pal.bar, dp(12).toFloat())
 
             val msgText = if (note.isNotEmpty()) {
                 note
@@ -364,16 +364,15 @@ class MainActivity : Activity() {
 
                 val modelBtn = label("Модель", 14f, Pal.text, false)
                 modelBtn.setPadding(dp(12), dp(8), dp(12), dp(8))
-                modelBtn.background = rounded(Pal.bg, dp(10).toFloat())
+                modelBtn.background = rounded(Pal.field, dp(10).toFloat())
                 val mlp = LinearLayout.LayoutParams(WRAP, WRAP)
                 mlp.leftMargin = dp(8)
                 modelBtn.setOnClickListener { pickModel() }
                 btnRow.addView(modelBtn, mlp)
 
-                val diagBtn = label("🐞", 14f, Pal.text, true)
-                diagBtn.maxLines = 1
+                val diagBtn = label("🐞 Диагностика", 14f, Pal.text, true)
                 diagBtn.setPadding(dp(12), dp(8), dp(12), dp(8))
-                diagBtn.background = rounded(Pal.bg, dp(10).toFloat())
+                diagBtn.background = rounded(Pal.field, dp(10).toFloat())
                 val dlp = LinearLayout.LayoutParams(WRAP, WRAP)
                 dlp.leftMargin = dp(8)
                 diagBtn.setOnClickListener { showDiag() }
@@ -462,11 +461,11 @@ class MainActivity : Activity() {
         }
         val f = File(Store.attDir(this), a.file)
         val sizeInfo = if (f.exists()) " (${maxOf(1L, f.length() / 1024)} КБ)" else ""
-        val t = label(icon + a.name + sizeInfo, 14f, Pal.text, true)
+        val t = label(icon + a.name + sizeInfo, 14f, Pal.white, true)
         t.maxLines = 2
         t.ellipsize = TextUtils.TruncateAt.END
         t.setPadding(dp(10), dp(6), dp(10), dp(6))
-        t.background = rounded(0x22808080, dp(8).toFloat())
+        t.background = rounded(0x33000000, dp(8).toFloat())
         t.setOnClickListener { previewAtt(a) }
         val lp = LinearLayout.LayoutParams(WRAP, WRAP)
         lp.bottomMargin = dp(6)
@@ -584,8 +583,7 @@ class MainActivity : Activity() {
 
         val tv = TextView(this)
         tv.textSize = size
-        tv.setTextColor(if (user) Pal.userText else Pal.text)
-        if (!user) { tv.typeface = android.graphics.Typeface.SERIF; tv.setLineSpacing(0f, 1.15f) }
+        tv.setTextColor(if (user) Pal.white else Pal.text)
         tv.setTextIsSelectable(true)
         tv.text = if (user) {
             m.text
@@ -605,7 +603,7 @@ class MainActivity : Activity() {
             val wrap = LinearLayout(this)
             wrap.orientation = LinearLayout.VERTICAL
             wrap.setPadding(dp(12), dp(8), dp(12), dp(6))
-            wrap.background = rounded(Pal.userBubble, dp(18).toFloat())
+            wrap.background = rounded(Pal.user, dp(14).toFloat())
             for (a in m.atts) wrap.addView(attView(a))
             if (m.text.isNotEmpty()) wrap.addView(tv, LinearLayout.LayoutParams(WRAP, WRAP))
             box.addView(wrap, lp)
@@ -637,12 +635,8 @@ class MainActivity : Activity() {
             wrap.addView(tv, LinearLayout.LayoutParams(MATCH, WRAP))
             box.addView(wrap, lp)
         } else {
-            if (user) {
-                tv.setPadding(dp(14), dp(10), dp(14), dp(10))
-                tv.background = rounded(Pal.userBubble, dp(18).toFloat())
-            } else {
-                tv.setPadding(dp(4), dp(6), dp(4), dp(6))
-            }
+            tv.setPadding(dp(12), dp(8), dp(12), dp(8))
+            tv.background = rounded(if (user) Pal.user else Pal.bot, dp(14).toFloat())
             box.addView(tv, lp)
         }
 
@@ -1227,19 +1221,15 @@ class MainActivity : Activity() {
         gen++
         val my = gen
         val userSys = if (chat.sys.isNotBlank()) chat.sys else Store.system(this)
-        val today = java.text.SimpleDateFormat("EEEE, d MMMM yyyy", java.util.Locale("ru")).format(java.util.Date())
-        val dateLine = "Текущая дата: $today."
-        val prof = Store.profile(this).trim()
-        val profBlock = if (prof.isEmpty()) "" else "\n\nЧто нужно знать о собеседнике (учитывай это, не пересказывай без необходимости):\n" + prof
         val fullSys = if (userSys.isBlank()) {
-            dateLine + profBlock + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+            Builder.DEV_SYSTEM_ADDON.trim()
         } else {
-            dateLine + "\n\n" + userSys + profBlock + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+            userSys + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
         }
         val temp = Store.temp(this).replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 1.0)
         val cfg = Cfg(
             Store.baseUrl(this), Store.apiKey(this), Store.model(this), Store.maxTokens(this),
-            fullSys, Store.bearer(this), Store.stream(this), temp, Store.web(this), Store.think(this)
+            fullSys, Store.bearer(this), Store.stream(this), temp, Store.web(this)
         )
         val r = Req(cfg, Store.attDir(this))
         req = r

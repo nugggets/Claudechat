@@ -36,8 +36,6 @@ class SettingsActivity : Activity() {
     private lateinit var cbStream: CheckBox
     private lateinit var cbDark: CheckBox
     private lateinit var cbWeb: CheckBox
-    private lateinit var cbThink: CheckBox
-    private lateinit var eProfile: EditText
     private lateinit var eTemp: EditText
     private lateinit var seek: SeekBar
     private lateinit var lblSize: TextView
@@ -187,15 +185,6 @@ class SettingsActivity : Activity() {
 
         cbWeb = check("Веб-поиск Claude (работает только с официальным API Anthropic)", Store.web(this))
         add(cbWeb, 4)
-        cbThink = check("Расширенное размышление (качество выше, ответ дольше; нужен лимит токенов больше 2048)", Store.think(this))
-        add(cbThink, 4)
-
-        small("О себе (память): что Claude должен знать о вас, например имя, чем занимаетесь, как любите, чтобы отвечали")
-        eProfile = field("Например: меня зовут Алекс, я программист, люблю краткие ответы", Store.profile(this))
-        eProfile.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        eProfile.minLines = 3
-        eProfile.gravity = Gravity.TOP
-        add(eProfile, 4)
 
         // --- Вид ---
         head("Вид")
@@ -216,24 +205,6 @@ class SettingsActivity : Activity() {
         add(seek, 4)
         cbDark = check("Тёмная тема", Store.dark(this))
         add(cbDark, 8)
-
-        val lblPad = label("", 14f, Pal.sub, false)
-        add(lblPad, 8)
-        val padSeek = SeekBar(this)
-        padSeek.max = 240
-        padSeek.progress = Store.topPad(this)
-        lblPad.text = "Отступ сверху (если не работает верх экрана): " + Store.topPad(this) + " dp"
-        padSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                lblPad.text = "Отступ сверху (если не работает верх экрана): " + p + " dp"
-            }
-
-            override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {
-                Store.setTopPad(this@SettingsActivity, s?.progress ?: 0)
-            }
-        })
-        add(padSeek, 4)
 
         // --- Действия ---
         add(button("Загрузить список моделей с сервера", false) { loadModels() }, 28)
@@ -344,7 +315,6 @@ class SettingsActivity : Activity() {
             rbB.isChecked, cbStream.isChecked, seek.progress + 10, cbDark.isChecked,
             eTemp.text.toString().trim(), cbWeb.isChecked
         )
-        Store.setProfileThink(this, eProfile.text.toString().trim(), cbThink.isChecked)
         Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
         finish()
     }

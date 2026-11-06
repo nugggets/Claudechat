@@ -12,20 +12,14 @@ import android.widget.TextView
 
 object Pal {
     var dark = true
-    // Палитра как в приложении Claude: тёплые нейтральные тона и терракотовый акцент
-    val bg: Int get() = if (dark) 0xFF262624.toInt() else 0xFFFAF9F5.toInt()
-    val bar: Int get() = bg
-    /** Ответ ассистента: без пузыря, прямо на фоне. */
-    val bot: Int get() = bg
-    /** Акцент (кнопка отправки, главные кнопки). */
-    val user: Int get() = 0xFFD97757.toInt()
-    /** Пузырь сообщения пользователя. */
-    val userBubble: Int get() = if (dark) 0xFF3A3938.toInt() else 0xFFF0EEE6.toInt()
-    val userText: Int get() = text
-    val text: Int get() = if (dark) 0xFFF2F0E8.toInt() else 0xFF141413.toInt()
-    val sub: Int get() = if (dark) 0xFFA8A69E.toInt() else 0xFF73726C.toInt()
-    val code: Int get() = if (dark) 0xFF1F1E1D.toInt() else 0xFFF0EEE6.toInt()
-    val field: Int get() = if (dark) 0xFF30302E.toInt() else 0xFFFFFFFF.toInt()
+    val bg: Int get() = if (dark) 0xFF0E1A24.toInt() else 0xFFEAF0F3.toInt()
+    val bar: Int get() = if (dark) 0xFF14232F.toInt() else 0xFFFFFFFF.toInt()
+    val bot: Int get() = if (dark) 0xFF1B2D3B.toInt() else 0xFFFFFFFF.toInt()
+    val user: Int get() = 0xFF2E6F8E.toInt()
+    val text: Int get() = if (dark) 0xFFE6EEF3.toInt() else 0xFF14232F.toInt()
+    val sub: Int get() = if (dark) 0xFF8EA3B2.toInt() else 0xFF5D7384.toInt()
+    val code: Int get() = if (dark) 0xFF0A121A.toInt() else 0xFFDCE6EC.toInt()
+    val field: Int get() = if (dark) 0xFF1B2D3B.toInt() else 0xFFFFFFFF.toInt()
     val err: Int get() = if (dark) 0xFFFF8A80.toInt() else 0xFFB3261E.toInt()
     val white: Int = 0xFFFFFFFF.toInt()
 
@@ -45,8 +39,8 @@ fun rounded(color: Int, radius: Float): GradientDrawable {
 
 fun Activity.styleWindow() {
     window.setBackgroundDrawable(ColorDrawable(Pal.bg))
-    window.statusBarColor = Pal.bg
-    window.navigationBarColor = Pal.bg
+    window.statusBarColor = Pal.bar
+    window.navigationBarColor = Pal.bar
     val light = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
     val f = window.decorView.systemUiVisibility
     window.decorView.systemUiVisibility = if (Pal.dark) (f and light.inv()) else (f or light)
@@ -67,7 +61,7 @@ fun Activity.topBar(titleText: String, left: String, onLeft: () -> Unit): Linear
     bar.orientation = LinearLayout.HORIZONTAL
     bar.gravity = Gravity.CENTER_VERTICAL
     bar.setBackgroundColor(Pal.bar)
-    bar.setPadding(dp(4), dp(4) + dp(Store.topPad(this)), dp(4), dp(4))
+    bar.setPadding(dp(4), dp(4), dp(4), dp(4))
     val b = label(left, 22f, Pal.text, true)
     b.gravity = Gravity.CENTER
     b.setPadding(dp(14), dp(8), dp(14), dp(8))
