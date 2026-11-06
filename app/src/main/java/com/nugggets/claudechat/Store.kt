@@ -87,6 +87,13 @@ object Store {
     const val DEFAULT_URL = "https://api.anthropic.com"
     const val DEFAULT_MODEL = "claude-opus-5-5"
 
+    /** Инструкция по умолчанию: тон и манера ответов как в приложении Claude. */
+    const val DEFAULT_SYSTEM = """Ты Claude, ассистент от Anthropic. Отвечай на том языке, на котором пишет человек.
+Тон: тёплый, прямой и честный; относись к собеседнику как к взрослому, способному человеку. Не льсти, не начинай с похвалы вопросу, не извиняйся без причины. Если не согласен, скажи об этом доброжелательно и по делу.
+Форма: в обычном разговоре и на простые вопросы отвечай связным текстом, коротко. Списки, заголовки и жирный шрифт используй только когда содержимое действительно многосоставное или об этом просят. Не задавай больше одного уточняющего вопроса за раз и сначала старайся ответить, даже если запрос неоднозначен.
+Если чего-то не знаешь или не уверен, так и скажи. Для данных, которые могли устареть, используй веб-поиск, если он включён.
+Код оформляй блоками, объяснения держи краткими."""
+
     val MODELS = listOf(
         "Opus 5.5" to "claude-opus-5-5",
         "Fable 5.1" to "claude-fable-5-1",
@@ -100,7 +107,8 @@ object Store {
     fun apiKey(c: Context): String = Crypto.dec(p(c).getString("key", "") ?: "")
     fun model(c: Context): String = p(c).getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
     fun maxTokens(c: Context): Int = p(c).getInt("max", 16384)
-    fun system(c: Context): String = p(c).getString("system", "") ?: ""
+    fun system(c: Context): String =
+        if (p(c).contains("system")) (p(c).getString("system", "") ?: "") else DEFAULT_SYSTEM
     fun bearer(c: Context): Boolean = p(c).getBoolean("bearer", false)
     fun stream(c: Context): Boolean = p(c).getBoolean("stream", true)
     fun textSize(c: Context): Int = p(c).getInt("size", 16)
@@ -210,7 +218,13 @@ object Store {
         }
         o.put("msgs", a)
         try {
-            File(dir(c), chat.id + ".json").writeText(o.toString(), Charsets.UTF_8)
+            val f = File(dir(c), chat.id + ".json")
+            val tmp = File(dir(c), chat.id + ".tmp")
+            tmp.writeText(o.toString(), Charsets.UTF_8)
+            if (!tmp.renameTo(f)) {
+                f.writeText(o.toString(), Charsets.UTF_8)
+                tmp.delete()
+            }
         } catch (e: Exception) {
         }
     }
@@ -221,7 +235,7 @@ object Store {
         val list = mutableListOf<Msg>()
         for (i in 0 until a.length()) {
             val m = a.getJSONObject(i)
-            val msg = Msg(m.getString("r"), m.getString("t"))
+            val msg = Msg(m.optString("r", "user"), m.optString("t", ""))
             val aa = m.optJSONArray("a")
             if (aa != null) {
                 for (k in 0 until aa.length()) {
@@ -232,7 +246,7 @@ object Store {
             list.add(msg)
         }
         return Chat(
-            o.getString("id"), o.optString("title", "Чат"), list,
+            o.optString("id"), o.optString("title", "Чат"), list,
             o.optLong("updated", 0L), o.optString("sys", "")
         )
     }
@@ -246,15 +260,23 @@ object Store {
         }
     }
 
+    /** Сколько файлов чатов не удалось прочитать при последнем показе списка. */
+    @Volatile var unreadable = 0
+
     fun list(c: Context): List<Chat> {
-        val files = dir(c).listFiles() ?: return emptyList()
+        val files = dir(c).listFiles { x -> x.name.endsWith(".json") } ?: return emptyList()
         val out = mutableListOf<Chat>()
+        var bad = 0
         for (f in files) {
             try {
-                out.add(parse(f.readText(Charsets.UTF_8)))
+                val ch = parse(f.readText(Charsets.UTF_8))
+                if (ch.id.isEmpty()) throw IllegalStateException("no id")
+                out.add(ch)
             } catch (e: Exception) {
+                bad++
             }
         }
+        unreadable = bad
         out.sortByDescending { it.updated }
         return out
     }
@@ -265,5 +287,42 @@ object Store {
             for (m in ch.msgs) Files.dropAll(c, m.atts)
         }
         File(dir(c), "$id.json").delete()
+    }
+
+    // ---- копия чатов в один JSON-файл (без вложений) ----
+    fun exportJson(c: Context): String {
+        val arr = JSONArray()
+        for (f in dir(c).listFiles { x -> x.name.endsWith(".json") } ?: emptyArray()) {
+            try {
+                arr.put(JSONObject(f.readText(Charsets.UTF_8)))
+            } catch (e: Exception) {
+            }
+        }
+        val o = JSONObject()
+        o.put("app", "claudechat")
+        o.put("version", 1)
+        o.put("chats", arr)
+        return o.toString()
+    }
+
+    /** Возвращает число восстановленных чатов; существующие, более новые чаты не трогает. */
+    fun importJson(c: Context, text: String): Int {
+        var n = 0
+        val arr = JSONObject(text).getJSONArray("chats")
+        for (i in 0 until arr.length()) {
+            try {
+                val o = arr.getJSONObject(i)
+                val id = o.getString("id")
+                val f = File(dir(c), "$id.json")
+                if (f.exists()) {
+                    val old = try { JSONObject(f.readText(Charsets.UTF_8)).optLong("updated", 0L) } catch (e: Exception) { -1L }
+                    if (old >= o.optLong("updated", 0L)) continue
+                }
+                f.writeText(o.toString(), Charsets.UTF_8)
+                n++
+            } catch (e: Exception) {
+            }
+        }
+        return n
     }
 }

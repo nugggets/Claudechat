@@ -340,7 +340,7 @@ class MainActivity : Activity() {
             val card = LinearLayout(this)
             card.orientation = LinearLayout.VERTICAL
             card.setPadding(dp(14), dp(12), dp(14), dp(12))
-            card.background = rounded(Pal.bar, dp(12).toFloat())
+            card.background = rounded(Pal.field, dp(12).toFloat())
 
             val msgText = if (note.isNotEmpty()) {
                 note
@@ -461,11 +461,11 @@ class MainActivity : Activity() {
         }
         val f = File(Store.attDir(this), a.file)
         val sizeInfo = if (f.exists()) " (${maxOf(1L, f.length() / 1024)} КБ)" else ""
-        val t = label(icon + a.name + sizeInfo, 14f, Pal.white, true)
+        val t = label(icon + a.name + sizeInfo, 14f, Pal.text, true)
         t.maxLines = 2
         t.ellipsize = TextUtils.TruncateAt.END
         t.setPadding(dp(10), dp(6), dp(10), dp(6))
-        t.background = rounded(0x33000000, dp(8).toFloat())
+        t.background = rounded(0x22808080, dp(8).toFloat())
         t.setOnClickListener { previewAtt(a) }
         val lp = LinearLayout.LayoutParams(WRAP, WRAP)
         lp.bottomMargin = dp(6)
@@ -583,7 +583,8 @@ class MainActivity : Activity() {
 
         val tv = TextView(this)
         tv.textSize = size
-        tv.setTextColor(if (user) Pal.white else Pal.text)
+        tv.setTextColor(if (user) Pal.userText else Pal.text)
+        if (!user) { tv.typeface = android.graphics.Typeface.SERIF; tv.setLineSpacing(0f, 1.15f) }
         tv.setTextIsSelectable(true)
         tv.text = if (user) {
             m.text
@@ -603,7 +604,7 @@ class MainActivity : Activity() {
             val wrap = LinearLayout(this)
             wrap.orientation = LinearLayout.VERTICAL
             wrap.setPadding(dp(12), dp(8), dp(12), dp(6))
-            wrap.background = rounded(Pal.user, dp(14).toFloat())
+            wrap.background = rounded(Pal.userBubble, dp(18).toFloat())
             for (a in m.atts) wrap.addView(attView(a))
             if (m.text.isNotEmpty()) wrap.addView(tv, LinearLayout.LayoutParams(WRAP, WRAP))
             box.addView(wrap, lp)
@@ -635,8 +636,12 @@ class MainActivity : Activity() {
             wrap.addView(tv, LinearLayout.LayoutParams(MATCH, WRAP))
             box.addView(wrap, lp)
         } else {
-            tv.setPadding(dp(12), dp(8), dp(12), dp(8))
-            tv.background = rounded(if (user) Pal.user else Pal.bot, dp(14).toFloat())
+            if (user) {
+                tv.setPadding(dp(14), dp(10), dp(14), dp(10))
+                tv.background = rounded(Pal.userBubble, dp(18).toFloat())
+            } else {
+                tv.setPadding(dp(4), dp(6), dp(4), dp(6))
+            }
             box.addView(tv, lp)
         }
 
@@ -1221,10 +1226,12 @@ class MainActivity : Activity() {
         gen++
         val my = gen
         val userSys = if (chat.sys.isNotBlank()) chat.sys else Store.system(this)
+        val today = java.text.SimpleDateFormat("EEEE, d MMMM yyyy", java.util.Locale("ru")).format(java.util.Date())
+        val dateLine = "Текущая дата: $today."
         val fullSys = if (userSys.isBlank()) {
-            Builder.DEV_SYSTEM_ADDON.trim()
+            dateLine + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
         } else {
-            userSys + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
+            dateLine + "\n\n" + userSys + "\n\n" + Builder.DEV_SYSTEM_ADDON.trim()
         }
         val temp = Store.temp(this).replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 1.0)
         val cfg = Cfg(
