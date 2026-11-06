@@ -364,15 +364,16 @@ class MainActivity : Activity() {
 
                 val modelBtn = label("Модель", 14f, Pal.text, false)
                 modelBtn.setPadding(dp(12), dp(8), dp(12), dp(8))
-                modelBtn.background = rounded(Pal.field, dp(10).toFloat())
+                modelBtn.background = rounded(Pal.bg, dp(10).toFloat())
                 val mlp = LinearLayout.LayoutParams(WRAP, WRAP)
                 mlp.leftMargin = dp(8)
                 modelBtn.setOnClickListener { pickModel() }
                 btnRow.addView(modelBtn, mlp)
 
-                val diagBtn = label("🐞 Диагностика", 14f, Pal.text, true)
+                val diagBtn = label("🐞", 14f, Pal.text, true)
+                diagBtn.maxLines = 1
                 diagBtn.setPadding(dp(12), dp(8), dp(12), dp(8))
-                diagBtn.background = rounded(Pal.field, dp(10).toFloat())
+                diagBtn.background = rounded(Pal.bg, dp(10).toFloat())
                 val dlp = LinearLayout.LayoutParams(WRAP, WRAP)
                 dlp.leftMargin = dp(8)
                 diagBtn.setOnClickListener { showDiag() }

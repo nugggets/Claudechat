@@ -188,11 +188,11 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 return once(bytes, kb, onStatus, onDelta)
             } catch (e: ApiError) {
                 val c = e.code
-                val retry = c == 429 || c == 500 || c == 502 || c == 503 || c == 504 || c == 529
+                val retry = c == 1000 || c == 429 || c == 500 || c == 502 || c == 503 || c == 504 || c == 529
                 if (!retry || attempt >= 2 || cancelled) throw e
                 attempt++
                 Diag.log("Код ответа $c, автоповтор $attempt/2")
-                onStatus("Сервер перегружен (код $c), повтор $attempt/2…")
+                onStatus(if (c == 1000) "Пустой ответ, повтор $attempt/2…" else "Сервер перегружен (код $c), повтор $attempt/2…")
                 var waited = 0
                 while (waited < 2500 * attempt && !cancelled) {
                     Thread.sleep(100)
@@ -309,7 +309,8 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
                 val trimmed = line.trim()
                 if (trimmed.isEmpty() || trimmed.startsWith(":")) continue
                 if (!trimmed.startsWith("data:")) {
-                    if (emitted == 0 && nonSseLines.length < 32000) {
+                    val isSseMeta = trimmed.startsWith("event:") || trimmed.startsWith("id:") || trimmed.startsWith("retry:")
+                    if (!isSseMeta && emitted == 0 && nonSseLines.length < 32000) {
                         nonSseLines.append(line).append("\n")
                     }
                     continue
@@ -447,8 +448,10 @@ class Req(private val cfg: Cfg, private val attDir: File? = null) {
             if (emitted == 0 && nonSseLines.isNotEmpty()) {
                 Diag.log("SSE поток не содержал data:, пробуем разобрать как полный JSON (${nonSseLines.length} симв.)")
                 parseFull(nonSseLines.toString(), res, onStatus, onDelta)
-            } else if (emitted == 0) {
+            } else if (emitted == 0 && !cancelled) {
                 Diag.log("ВНИМАНИЕ: SSE поток завершился, но ни одного символа текста не получено (событий: ${Diag.lastSseEventsCount})")
+                val why = if (res.stop.isNotEmpty()) " (причина остановки: ${res.stop})" else ""
+                throw ApiError("Модель вернула пустой ответ$why. Нажмите «Получить ответ» ещё раз; если повторяется, смените модель или очистите системную инструкцию в настройках.", 1000)
             }
         } finally {
             try {
