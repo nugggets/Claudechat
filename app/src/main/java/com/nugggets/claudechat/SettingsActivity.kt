@@ -147,6 +147,27 @@ class SettingsActivity : Activity() {
         if (Store.bearer(this)) rbB.isChecked = true else rbX.isChecked = true
         add(rg, 4)
 
+        add(button("🌐 Использовать официальный API Anthropic", true) {
+            val curUrl = eUrl.text.toString().trim()
+            val curKey = eKey.text.toString().trim()
+            if (curUrl.isNotEmpty() && !curUrl.contains("api.anthropic.com")) {
+                Store.stashProxy(this, curUrl, curKey)
+            }
+            eUrl.setText(Store.DEFAULT_URL)
+            rbX.isChecked = true
+            if (!curKey.startsWith("sk-ant-")) eKey.setText("")
+            Toast.makeText(this, "Вставьте ключ sk-ant-… и нажмите «Сохранить»", Toast.LENGTH_LONG).show()
+        }, 8)
+        add(label("Ключ создаётся на console.anthropic.com в разделе API Keys. Оплата там отдельная от подписки Claude. Только на официальном API работают веб-поиск и кеширование промпта.", 12f, Pal.sub, false), 4)
+        if (Store.proxyUrl(this).isNotEmpty()) {
+            add(button("↩ Вернуть прежний прокси", false) {
+                eUrl.setText(Store.proxyUrl(this))
+                eKey.setText(Store.proxyKey(this))
+                rbB.isChecked = rbB.isChecked
+                Toast.makeText(this, "Прокси подставлен, нажмите «Сохранить»", Toast.LENGTH_LONG).show()
+            }, 4)
+        }
+
         // --- Модель ---
         head("Модель")
         eModel = field(Store.DEFAULT_MODEL, Store.model(this))

@@ -132,6 +132,13 @@ object Store {
     private fun p(c: Context): SharedPreferences = c.getSharedPreferences("cfg", Context.MODE_PRIVATE)
 
     fun baseUrl(c: Context): String = p(c).getString("url", DEFAULT_URL) ?: DEFAULT_URL
+    /** Запоминает прежний адрес и ключ (прокси), чтобы можно было вернуться после переключения на официальный API. */
+    fun stashProxy(c: Context, url: String, key: String) {
+        p(c).edit().putString("px_url", url).putString("px_key", Crypto.enc(key)).apply()
+    }
+    fun proxyUrl(c: Context): String = p(c).getString("px_url", "") ?: ""
+    fun proxyKey(c: Context): String = Crypto.dec(p(c).getString("px_key", "") ?: "")
+
     fun apiKey(c: Context): String = Crypto.dec(p(c).getString("key", "") ?: "")
     fun model(c: Context): String = p(c).getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
     fun maxTokens(c: Context): Int {
